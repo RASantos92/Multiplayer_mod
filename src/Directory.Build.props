@@ -1,0 +1,19 @@
+<Project>
+  <!-- Shared settings for mod projects: build against the game's own DLLs without copying them. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <GameRef>$(MSBuildThisFileDirectory)..\game-ref\</GameRef>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="GodotSharp" HintPath="$(GameRef)GodotSharp.dll" Private="false" />
+    <Reference Include="Steamworks.NET" HintPath="$(GameRef)Steamworks.NET.dll" Private="false" />
+    <Reference Include="GamesByMalcs.Melvor2" HintPath="$(GameRef)GamesByMalcs.Melvor2.dll" Private="false" />
+    <Reference Include="Nakama" HintPath="$(GameRef)Nakama.dll" Private="false" />
+    <Reference Include="Serilog" HintPath="$(GameRef)Serilog.dll" Private="false" />
+  </ItemGroup>
+</Project>

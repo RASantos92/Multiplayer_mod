@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Melvor2.ModLoader</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+</Project>
