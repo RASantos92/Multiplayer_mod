@@ -29,7 +29,7 @@ WHAT IT CHANGES
   - Adds one small startup call to GamesByMalcs.Melvor2.dll (the original is kept
     next to it as GamesByMalcs.Melvor2.dll.orig).
   - Adds Melvor2.ModLoader.dll and a "mods" folder with Melvor2.Chat.dll.
-  - Your saves are copied to a "save-backups" folder next to install.cmd first.
+  - Your saves are copied to %LOCALAPPDATA%\Melvor2Chat\save-backups first.
 
 PRIVACY
   Chat goes through a friends-only Steam lobby. The mod does not use the game's

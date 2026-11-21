@@ -2,6 +2,7 @@
 # Run it again after every game update. Undo with uninstall.cmd.
 param([string]$GameDir)
 $ErrorActionPreference = 'Stop'
+trap { Write-Host ''; Write-Host ('ERROR: ' + $_.Exception.Message) -ForegroundColor Red; exit 1 }
 . "$PSScriptRoot\find-game.ps1"
 
 $GameDir = Find-Melvor2 $GameDir
@@ -12,10 +13,10 @@ $gameDll = Join-Path $dataDir 'GamesByMalcs.Melvor2.dll'
 $origDll = "$gameDll.orig"
 $tmp = "$gameDll.patched.tmp"
 
-# Back up saves next to this script.
+# Back up saves to a fixed place that survives reinstalling the mod.
 $saves = Join-Path $env:APPDATA 'Games By Malcs\Melvor Idle 2\steam'
 if (Test-Path $saves) {
-    $dest = Join-Path $PSScriptRoot ('save-backups\' + (Get-Date -Format 'yyyy-MM-dd_HHmmss'))
+    $dest = Join-Path $env:LOCALAPPDATA ('Melvor2Chat\save-backups\' + (Get-Date -Format 'yyyy-MM-dd_HHmmss'))
     Copy-Item $saves $dest -Recurse -Force
     Write-Host "Saves backed up to $dest"
 }

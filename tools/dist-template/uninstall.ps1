@@ -1,6 +1,7 @@
 # Removes the friends-chat mod and restores the original game DLL. Run uninstall.cmd with the game closed.
 param([string]$GameDir)
 $ErrorActionPreference = 'Stop'
+trap { Write-Host ''; Write-Host ('ERROR: ' + $_.Exception.Message) -ForegroundColor Red; exit 1 }
 . "$PSScriptRoot\find-game.ps1"
 
 $GameDir = Find-Melvor2 $GameDir
