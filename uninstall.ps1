@@ -1,5 +1,5 @@
 # One-line uninstaller for the Melvor Idle 2 friends-chat mod.
-#   irm https://raw.githubusercontent.com/RASantos92/Multiplayer_mod/main/uninstall.ps1 | iex
+#   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/RASantos92/Multiplayer_mod/main/uninstall.ps1 | iex"
 #
 # Uses the copy the installer left in %LOCALAPPDATA%\Melvor2Chat, downloading it again if it is gone.
 

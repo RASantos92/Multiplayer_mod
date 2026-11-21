@@ -10,15 +10,17 @@ This is an unofficial, fan-made mod. Windows and Steam only. Tested on game vers
 
 **1. Close Melvor Idle 2.**
 
-**2. Open PowerShell.** Click the Windows Start button, type `powershell`, and press Enter. A blue or black window opens.
+**2. Press the Windows key + R.** A small "Run" box opens.
 
-**3. Copy this line, paste it into that window, and press Enter:**
+**3. Copy this whole line, paste it into the box, and press Enter:**
 
-```powershell
-irm https://raw.githubusercontent.com/RASantos92/Multiplayer_mod/main/install.ps1 | iex
+```
+powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/RASantos92/Multiplayer_mod/main/install.ps1 | iex"
 ```
 
-**4. Wait for the word `Installed`.** Then close the window and start the game from Steam as usual. If Steam asks how to launch, pick the first option.
+**4. A window opens and does the work. Wait for the word `Installed`.** Then close the window and start the game from Steam as usual. If Steam asks how to launch, pick the first option.
+
+The same line also works if you paste it into Command Prompt or PowerShell.
 
 That's it. You only need to do this again after the game updates (see below).
 
@@ -54,10 +56,10 @@ If the mod stops working after an update, the game probably changed and the mod 
 
 ## Uninstall
 
-Close the game, open PowerShell, and run:
+Close the game, press the Windows key + R, paste this line, and press Enter:
 
-```powershell
-irm https://raw.githubusercontent.com/RASantos92/Multiplayer_mod/main/uninstall.ps1 | iex
+```
+powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/RASantos92/Multiplayer_mod/main/uninstall.ps1 | iex"
 ```
 
 If anything still looks wrong, Steam can repair the game: right-click **Melvor Idle 2** in your library, choose **Properties**, then **Installed Files**, then **Verify integrity of game files**.
@@ -94,7 +96,7 @@ If anything still looks wrong, Steam can repair the game: right-click **Melvor I
 </details>
 
 <details>
-<summary>Manual install (no PowerShell line)</summary>
+<summary>Manual install (download a zip instead)</summary>
 
 1. Download [Melvor2Chat.zip](https://github.com/RASantos92/Multiplayer_mod/releases/latest/download/Melvor2Chat.zip).
 2. Right-click the zip and choose **Extract All**.

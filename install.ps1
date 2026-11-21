@@ -1,6 +1,6 @@
 # One-line installer for the Melvor Idle 2 friends-chat mod.
 # Friends run this from PowerShell (see README):
-#   irm https://raw.githubusercontent.com/RASantos92/Multiplayer_mod/main/install.ps1 | iex
+#   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/RASantos92/Multiplayer_mod/main/install.ps1 | iex"
 #
 # It downloads the latest release zip from this repository into
 # %LOCALAPPDATA%\Melvor2Chat and runs the installer inside it.
