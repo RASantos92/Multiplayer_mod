@@ -15,10 +15,11 @@ namespace Melvor2.Chat;
 /// <summary>
 /// The Guild window: a full-screen dimmed backdrop with a framed window in the middle, styled after the game's
 /// Mastery Guild window. Left: your guilds, invites and actions. Right: the selected guild with a Members tab
-/// (everyone) and a Manage tab (owner and officers), or the create / find screens.
+/// (everyone), a Manage tab (owner and officers) and a Marketplace tab (GuildWindow.Market.cs), or the
+/// create / find screens.
 /// Lists are rebuilt from GuildService state whenever it changes.
 /// </summary>
-internal sealed class GuildWindow
+internal sealed partial class GuildWindow
 {
     private enum Mode { Empty, Guild, Create, Find, Profile }
 
@@ -111,10 +112,13 @@ internal sealed class GuildWindow
         var group = new ButtonGroup();
         _membersButton = TabButton("Members", group);
         _manageButton = TabButton("Manage", group);
-        _membersButton.Pressed += () => { _manage = false; RebuildPage(); };
-        _manageButton.Pressed += () => { _manage = true; RefreshDetail(); RebuildPage(); };
+        _marketButton = TabButton("Marketplace", group);
+        _membersButton.Pressed += () => { _manage = false; _market = false; RebuildPage(); };
+        _manageButton.Pressed += () => { _manage = true; _market = false; RefreshDetail(); RebuildPage(); };
+        _marketButton.Pressed += OpenMarketTab;
         _tabs.AddChild(_membersButton);
         _tabs.AddChild(_manageButton);
+        _tabs.AddChild(_marketButton);
         right.AddChild(_tabs);
 
         _page = new VBoxContainer();
@@ -131,8 +135,18 @@ internal sealed class GuildWindow
         service.Notice += OnNotice;
         ModEntry.Boost.Changed += OnServiceChanged; // The bonus line and Join buttons depend on it.
         ModEntry.Fight.Changed += OnServiceChanged;
+        if (ModEntry.Market != null)
+        {
+            ModEntry.Market.Changed += OnServiceChanged;
+            ModEntry.Market.Notice += OnNotice;
+        }
         _backdrop.TreeExiting += () =>
         {
+            if (ModEntry.Market != null)
+            {
+                ModEntry.Market.Changed -= OnServiceChanged;
+                ModEntry.Market.Notice -= OnNotice;
+            }
             service.Changed -= OnServiceChanged;
             service.Notice -= OnNotice;
             ModEntry.Boost.Changed -= OnServiceChanged;
@@ -170,6 +184,7 @@ internal sealed class GuildWindow
 
         _sinceDetail += delta;
         if (_manage && _sinceDetail > 10) RefreshDetail();
+        TickMarket(delta);
     }
 
     private void OnServiceChanged()
@@ -256,6 +271,9 @@ internal sealed class GuildWindow
                 "action as you. In combat, guild mates fighting the same enemy also add part of their damage to " +
                 "your fight: 15% of it if your combat levels are within 10, otherwise 8%. The XP and loot " +
                 "you earn that way stay on your character.\n\n" +
+                "The guild marketplace moves real items and gold: listing an item takes it out of your bank, " +
+                "buying takes your gold and gives you the item, and your listings and offers are visible to your " +
+                "guild mates.\n\n" +
                 "It does not send your save or anything about your account. You can delete your guild data at any time."));
             Button enable = update
                 ? Action("Accept and continue", "TexturedActionButtonGreen8x", _service.AcceptConsent)
@@ -332,9 +350,11 @@ internal sealed class GuildWindow
                 break;
             case Mode.Guild when guild != null:
                 _manageButton.Text = guild.Rank == "owner" ? "Owner" : "Manage";
-                _membersButton.SetPressedNoSignal(!_manage);
+                _membersButton.SetPressedNoSignal(!_manage && !_market);
                 _manageButton.SetPressedNoSignal(_manage);
-                if (_manage) BuildManage(guild);
+                _marketButton.SetPressedNoSignal(_market);
+                if (_market) BuildMarket(guild);
+                else if (_manage) BuildManage(guild);
                 else BuildMembers(guild);
                 break;
             default:

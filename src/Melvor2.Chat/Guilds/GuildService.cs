@@ -106,6 +106,9 @@ internal sealed class GuildService
     /// <summary>Guild list, members, invites or requests changed.</summary>
     public event Action? Changed;
 
+    /// <summary>Raised with the whole reply after every successful sync, for parts of the mod that ride along on it.</summary>
+    public event Action<System.Text.Json.JsonElement>? Synced;
+
     /// <summary>A result or error worth showing the player.</summary>
     public event Action<string>? Notice;
 
@@ -505,6 +508,8 @@ internal sealed class GuildService
 
             foreach (JsonElement message in result.Body.Items("messages")) AddLine(message);
             ReadInvites(result.Body);
+
+            Synced?.Invoke(result.Body);
 
             if (membershipChanged) RefreshAll();
             else RaiseIfChanged();

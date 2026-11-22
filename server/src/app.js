@@ -3,6 +3,7 @@
 // { status, body }.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { ObjectId } from 'mongodb';
+import { createMarket } from './market.js';
 
 export const PROTOCOL = 1;
 
@@ -301,6 +302,8 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
     return { target, member, rank: rankOf(ctx.guild, member) };
   }
 
+  const market = createMarket({ store, now, guildCtx, requireRank, limits: limits.market });
+
   // ----- handlers: (ctx) => body | reply(status, body) -----
   // ctx = { me, player, params, query, body, headers, ip }
 
@@ -339,6 +342,10 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
     async deleteMe({ me }) {
       if (await store.countOwned(me)) {
         throw conflict('owns_guild', 'Transfer or disband the guilds you own before deleting your data');
+      }
+      // Items and gold only exist on the server while they wait: deleting now would lose them.
+      if (await market.hasUnfinished(me)) {
+        throw conflict('market_pending', 'Cancel your marketplace listings and let the game collect what is waiting for you first');
       }
       await store.purgePlayerChildren(me);
       await store.deletePlayer(me);
@@ -390,6 +397,8 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
           : store.latestMessages(gids, L.syncInitialMessages),
         store.requestsOf(me),
       ]);
+      await market.sweep();
+      const claims = await market.pendingClaims(me);
 
       // The cursor is "<newest timestamp seen>-<ids seen inside the overlap window>". Each
       // poll re-reads the last couple of seconds so a message whose insert landed slightly
@@ -420,8 +429,10 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
           id: String(guild._id),
           name: guild.name,
           rank: rankOf(guild, member),
+          marketRev: guild.marketRev ?? 0,
           members: sortMembers(byGuild.get(String(guild._id))),
         })),
+        claims,
         messages: fresh.map(messageOut),
         invites: reqs.filter((r) => r.kind === 'invite').map(inviteOut),
       };
@@ -492,6 +503,7 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
     async disband({ me, params }) {
       const ctx = await guildCtx(params.id, me);
       requireRank(ctx, 'owner');
+      await market.closeListings({ guildId: ctx.gid }, 'guild_disbanded');
       // Children first so a failure part-way leaves a guild the owner can disband again;
       // the second sweep catches a join that slipped in while we were deleting.
       await store.purgeGuildChildren(ctx.gid);
@@ -596,6 +608,8 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
       requireRank(ctx, 'owner', 'officer', 'member');
       if (ctx.rank === 'owner') throw conflict('owner_cannot_leave', 'Transfer ownership or disband the guild first');
       await store.deleteMember(ctx.gid, me);
+      await market.closeListings({ guildId: ctx.gid, sellerId: me }, 'left_guild');
+      await store.deleteOffers({ guildId: ctx.gid, buyerId: me });
       return { ok: true };
     },
 
@@ -606,6 +620,8 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
       if (t.rank === 'owner') throw forbidden('The owner cannot be kicked');
       if (ctx.rank === 'officer' && t.rank !== 'member') throw forbidden('Officers can only kick members');
       await store.deleteMember(ctx.gid, t.target);
+      await market.closeListings({ guildId: ctx.gid, sellerId: t.target }, 'left_guild');
+      await store.deleteOffers({ guildId: ctx.gid, buyerId: t.target });
       return { ok: true };
     },
 
@@ -670,6 +686,7 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
     ['POST', 'guilds/:id/transfer', h.transfer],
     ['POST', 'guilds/:id/messages', h.postMessage],
     ['GET', 'guilds/:id/messages', h.history],
+    ...market.routes,
   ].map(([method, pattern, fn, opts]) => ({ method, parts: pattern.split('/'), fn, auth: opts?.auth !== false }));
 
   function match(method, segs) {

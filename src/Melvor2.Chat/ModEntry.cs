@@ -11,7 +11,7 @@ namespace Melvor2.Chat;
 /// <summary>Found and called by Melvor2.ModLoader.</summary>
 public static class ModEntry
 {
-    public const string Version = "0.4.0";
+    public const string Version = "0.5.0";
 
     private static SceneTree? s_tree;
     private static ChatPanel? s_panel;
@@ -21,6 +21,7 @@ public static class ModEntry
     private static bool s_failed;
     private static ActivityInfo? s_activity;
     private static CombatInfo? s_combat;
+    private static double s_sinceMarket;
     private static double s_sinceGameWork;
     private static double s_sinceProfile = 60;
 
@@ -29,6 +30,9 @@ public static class ModEntry
 
     /// <summary>Shared combat: the guild mates in my fight and the damage they add.</summary>
     internal static PartyCombat Fight { get; } = new();
+
+    /// <summary>The guild marketplace (created with the guild service).</summary>
+    internal static MarketService? Market { get; private set; }
 
     /// <summary>The loaded game when it is safe to touch (main thread, not paused), otherwise null.</summary>
     internal static Game? CurrentGame() => s_tree == null ? null : GameAccess.Current(s_tree);
@@ -121,6 +125,8 @@ public static class ModEntry
                 Boost.Changed += () => s_panel.AddSystemLine(Boost.Active
                     ? "Party bonus on: " + Boost.PercentText + " " + Boost.SkillName + " XP while you train with " + Boost.PartnerName + "."
                     : "Party bonus ended.");
+                Market = new MarketService(s_guilds);
+                Market.Notice += text => s_panel.AddSystemLine("Marketplace: " + text);
                 s_panel.BindGuilds(s_guilds);
                 s_hook = new GameUiHook(s_tree, s_panel, s_guilds);
             }
@@ -144,6 +150,19 @@ public static class ModEntry
                 s_guilds.Tick(delta);
                 GameWork(delta);
                 Fight.Frame(CurrentGame(), delta);
+                s_sinceMarket += delta;
+                if (s_sinceMarket >= 0.5)
+                {
+                    s_sinceMarket = 0;
+                    try
+                    {
+                        Market?.Tick(CurrentGame());
+                    }
+                    catch (Exception e)
+                    {
+                        Log("Marketplace work failed: " + e);
+                    }
+                }
             }
 
             try
@@ -159,6 +178,7 @@ public static class ModEntry
             if (UiProbe.Requested) UiProbe.Tick(s_tree!);
             if (GameState.GameProbe.Requested) GameState.GameProbe.Tick(s_tree!);
             if (GameState.CombatProbe.Requested) GameState.CombatProbe.Tick(s_tree!, delta);
+            if (GameState.BankProbe.Requested) GameState.BankProbe.Tick(s_tree!);
 
             bool down = Input.IsKeyPressed(Key.F8);
             if (down && !s_hotkeyDown) s_panel.Toggle();

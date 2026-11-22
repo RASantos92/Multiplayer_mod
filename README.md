@@ -87,6 +87,27 @@ Click a guild mate's fight in the Members tab to fight the same enemy or dungeon
 
 ---
 
+**Guild marketplace**
+
+The **Marketplace** tab in the Guild window lets guild mates sell items to each other for gold.
+
+- **Sell:** click **Sell an item**, pick something from your bank, choose how many and the price each. The items leave your bank straight away and wait on the market.
+- **Price limits:** the price must be between 80% and 120% of what the game says the item is worth. The form shows the allowed range and refuses anything outside it.
+- **Buy:** click **Buy** on a listing and choose how many. **Buy now** takes your gold and puts the items in your bank within a second or two.
+- **Haggle:** in the same panel you can **Make offer** at a lower price (not below 80% of the item's value). The seller sees it under **Offers on your listings** and accepts or declines within 48 hours. If they accept, you pay and get the items automatically.
+- **Getting paid:** the gold arrives by itself the next time you are in the game with a save loaded. The chat tells you what sold.
+- **Cancel:** click **Cancel** twice on your own listing to get the unsold items back. Listings that do not sell in 14 days come back by themselves.
+
+Good to know:
+
+- Locked items and items with no gold value cannot be listed. Equipped gear is not in your bank, so unequip it first.
+- You can have 20 listings per guild.
+- Items you buy do not count as "found" for the completion log.
+- If your bank is full, bought or returned items wait on the market until there is room.
+- Leaving a guild cancels your listings there; the items still come back to you.
+- **Delete my guild data** is refused while you have listings or anything waiting to be collected, so nothing gets lost.
+- Everyone trading needs version 0.5.0 or newer.
+
 ## How to chat
 
 Click the speech-bubble icon in the bottom bar (next to the music icon), or press **F8**.
@@ -161,6 +182,7 @@ Uninstalling does not remove you from your guilds. To erase your guild data from
 - **Friends chat is invite-only.** It uses a private Steam lobby that only people you invite can join.
 - **It does not touch your account.** The mod does not use the game's cloud login and does not read or send your save.
 - **Guilds are opt-in.** Nothing goes to the guild server until you click **Enable Guilds**.
+- **The marketplace moves real items and gold.** A trade cannot be undone by the mod. If a save is rolled back after a trade (an old backup, or the cloud save replacing the local one), items or gold can end up duplicated or lost; the mod cannot detect that. Trade with people you trust.
 - **The party bonus is real XP, and shared fights give real loot.** The bonuses themselves are temporary and never written to your save, but the extra XP, kills and loot you earn with them stay on your character like any other.
 - **It is easy to undo.** The original game file is kept and the uninstall line puts it back.
 - **It is unofficial.** The game's developers do not support it, so use it at your own risk.
@@ -185,6 +207,7 @@ Once you click **Enable Guilds**, the mod sends:
 - what you are doing right now (the skill and the exact action), and when you were last online
 - all your skill levels and the gear you have equipped
 - while you are fighting: your health, damage per second, combat level, attack speed and chance to hit
+- your marketplace listings and offers: the item, quantity and price
 
 It never sends your save, your bank, or anything about your Steam or game account. Other members of your guilds can see your name, rank, online status, current action, skill levels, equipped gear and, while you fight, your health and damage.
 
