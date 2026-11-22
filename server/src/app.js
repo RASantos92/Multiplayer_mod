@@ -21,6 +21,8 @@ export const DEFAULT_LIMITS = {
   // [max hits, window in ms]
   rate: {
     register: [30, 60 * 60_000], // per IP
+    authFail: [30, 60_000], // per IP, requests with a missing or wrong key (counted in memory)
+    admin: [20, 60 * 60_000], // per IP
     write: [60, 60_000], // per player, every non-GET except /sync
     message: [10, 10_000], // per player, on top of `write`
     sync: [60, 60_000], // per player
@@ -251,8 +253,47 @@ const reply = (status, body) => ({ status, body });
 
 // ---------- app ----------
 
-export function createApp({ store, limits = {}, now = () => Date.now() }) {
+/** "a, b" -> ['a', 'b']: codes are compared without regard to case or surrounding spaces. */
+const parseCodes = (v) => String(v ?? '').split(',').map((c) => c.trim().toLowerCase()).filter(Boolean);
+
+/**
+ * @param {object} o
+ * @param {{registerCode?: string, adminKey?: string}} [o.config]
+ *   registerCode: when set, a new player must send one of these (comma separated) codes to register.
+ *   adminKey: when set, turns on the admin endpoints, which need it in the X-Admin-Key header.
+ */
+export function createApp({ store, limits = {}, now = () => Date.now(), config = {} }) {
   const L = { ...DEFAULT_LIMITS, ...limits, rate: { ...DEFAULT_LIMITS.rate, ...limits.rate } };
+  const registerCodes = parseCodes(config.registerCode);
+  const adminKeyHash = config.adminKey ? sha256(String(config.adminKey)) : null;
+
+  // Requests with a bad key cost a database read each, so an address that keeps sending them is cut off
+  // before that read. Kept in memory: it only has to hold back a flood on a warm instance.
+  const authFails = new Map();
+  const failWindow = (ip) => {
+    const [, windowMs] = L.rate.authFail;
+    const f = authFails.get(ip);
+    return f && now() - f.start < windowMs ? f : null;
+  };
+  function noteAuthFail(ip) {
+    const f = failWindow(ip);
+    if (f) f.n++;
+    else {
+      if (authFails.size > 5000) authFails.clear();
+      authFails.set(ip, { start: now(), n: 1 });
+    }
+  }
+
+  function checkRegisterCode(code) {
+    if (!registerCodes.length) return;
+    if (typeof code !== 'string' || !code.trim()) {
+      throw new HttpError(403, 'code_required', 'This server is in closed testing. Enter the tester code you were given.');
+    }
+    const sent = sha256(code.trim().toLowerCase());
+    if (!registerCodes.some((c) => sameHash(sha256(c), sent))) {
+      throw new HttpError(403, 'code_wrong', 'That tester code is not right. Check it and try again.');
+    }
+  }
 
   async function rate(key, bucket) {
     const [max, windowMs] = L.rate[bucket];
@@ -317,10 +358,13 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
 
       let existing = await store.getPlayer(steamId);
       if (!existing) {
+        checkRegisterCode(body.code);
         const t = new Date(now());
         if (await store.insertPlayer({ _id: steamId, name, keyHash, createdAt: t, lastSeen: t, status: null })) return out(true);
         existing = await store.getPlayer(steamId); // lost a race with another register
       }
+      // An admin reset this player's key (they lost their key file): the next register sets a new one.
+      if (existing && existing.keyHash === null && (await store.claimPlayer(steamId, keyHash, name))) return out(false);
       if (!existing || !sameHash(existing.keyHash, keyHash)) {
         throw conflict('steam_id_claimed', 'This Steam ID is already registered with a different key');
       }
@@ -456,26 +500,47 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
       return reply(201, { guild: guildOut({ ...doc, _id: gid }, { rank: 'owner', memberCount: 1 }) });
     },
 
+    // Lets a player who lost their key file enable guilds again: their next register sets a new key.
+    // Guild memberships and anything waiting on the marketplace are kept.
+    async adminResetPlayer({ body, headers, ip }) {
+      if (!adminKeyHash) throw notFound('not_found', 'No such endpoint');
+      await rate(ip, 'admin');
+      if (!sameHash(sha256(String(headers['x-admin-key'] ?? '')), adminKeyHash)) {
+        throw new HttpError(401, 'unauthorized', 'Wrong admin key');
+      }
+      const steamId = vSteamId(body.steamId);
+      const player = await store.getPlayer(steamId);
+      if (!player) throw notFound('player_not_found', 'No such player');
+      await store.resetPlayerKey(steamId);
+      return { ok: true, player: { id: steamId, name: player.name } };
+    },
+
     async searchGuilds({ query }) {
       const q = (query.get('q') ?? '').trim().toLowerCase();
       if (len(q) > 24) throw bad('invalid_query', 'q must be at most 24 characters');
       const found = await store.searchGuilds(q, L.searchResults);
-      return { guilds: found.map(({ guild, memberCount }) => guildOut(guild, { memberCount })) };
+      return { guilds: found.map(({ guild, memberCount }) => ({ ...guildOut(guild, { memberCount }), ownerId: undefined })) };
     },
 
     async getGuild({ me, params }) {
       const ctx = await guildCtx(params.id, me);
       const staff = ctx.rank === 'owner' || ctx.rank === 'officer';
       const [roster, pending, mine] = await Promise.all([
-        store.rosters([ctx.gid]),
+        ctx.rank ? store.rosters([ctx.gid]) : null,
         staff ? store.listRequests(ctx.gid) : null,
         ctx.rank ? null : store.getRequest(ctx.gid, me),
       ]);
       const out = {
-        guild: guildOut(ctx.guild, { memberCount: roster.length, myRank: ctx.rank, myPending: mine?.kind ?? null }),
-        // Presence is only shown to members.
-        members: sortMembers(roster.map((m) => memberOut(ctx.guild, m, !!ctx.rank))),
+        guild: guildOut(ctx.guild, {
+          memberCount: roster ? roster.length : await store.countMembers(ctx.gid),
+          myRank: ctx.rank,
+          myPending: mine?.kind ?? null,
+        }),
+        // Who is in a guild (names and Steam IDs) is only shown to its members.
+        members: roster ? sortMembers(roster.map((m) => memberOut(ctx.guild, m, true))) : [],
       };
+      // The owner's Steam ID is not for outsiders either.
+      if (!ctx.rank) delete out.guild.ownerId;
       if (pending) {
         const row = (r) => ({ playerId: r.playerId, name: r.name, by: r.by, at: ms(r.at) });
         out.requests = pending.filter((r) => r.kind === 'request').map(row);
@@ -666,6 +731,7 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
   const routes = [
     ['POST', 'register', h.register, { auth: false }],
     ['POST', 'sync', h.sync, { auth: false }], // does its own auth + rate limit
+    ['POST', 'admin/reset-player', h.adminResetPlayer, { auth: false }], // checks X-Admin-Key itself
     ['GET', 'me', h.me],
     ['DELETE', 'me', h.deleteMe],
     ['PUT', 'me/profile', h.putProfile],
@@ -709,8 +775,12 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
    * @returns {Promise<{status: number, body: object}>}
    */
   async function handle(req) {
+    const ip = req.ip || 'unknown';
     try {
       const headers = req.headers ?? {};
+      if ((failWindow(ip)?.n ?? 0) >= L.rate.authFail[0]) {
+        throw new HttpError(429, 'rate_limited', 'Too many requests with a wrong key. Wait a minute and try again.');
+      }
       const proto = headers['x-mod-protocol'];
       if (!/^\d{1,6}$/.test(proto ?? '') || Number(proto) < PROTOCOL) {
         throw new HttpError(426, 'upgrade_required', `This server needs mod protocol ${PROTOCOL} or newer (header X-Mod-Protocol). Update the mod.`);
@@ -722,7 +792,7 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
         headers,
         query: req.query ?? new URLSearchParams(),
         body: req.body ?? {},
-        ip: req.ip || 'unknown',
+        ip,
       };
       if (route.auth) {
         const { steamId, keyHash } = parseAuth(headers);
@@ -735,7 +805,10 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
       const out = await route.fn(ctx);
       return out && typeof out.status === 'number' && out.body ? out : { status: 200, body: out };
     } catch (e) {
-      if (e instanceof HttpError) return { status: e.status, body: { error: { code: e.code, message: e.message } } };
+      if (e instanceof HttpError) {
+        if (e.status === 401) noteAuthFail(ip);
+        return { status: e.status, body: { error: { code: e.code, message: e.message } } };
+      }
       throw e;
     }
   }

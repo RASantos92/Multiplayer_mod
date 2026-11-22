@@ -25,6 +25,8 @@ You need a MongoDB Atlas cluster and its connection string (`mongodb+srv://...`)
 3. Add the connection string yourself: open the project on <https://vercel.com>, go to **Settings**, then **Environment Variables**, and add
    - Key `MONGODB_URI`, value: your Atlas connection string with the real password in place of `<db_password>`. Tick **Production** (and Preview if you want preview deploys to work).
    - Optional: key `MONGODB_DB` to change the database name. The default is `melvor2guilds`.
+   - Recommended: key `REGISTER_CODE`, a tester code you make up (letters, digits, dashes; upper and lower case are treated the same). While it is set, only people who type it into the mod can enable guilds for the first time. Hand it out privately, not in a public channel. Several codes can be given separated by commas; to retire a code, remove it and deploy again. Players who already enabled guilds are not affected. Without it, anyone can register.
+   - Recommended: key `ADMIN_KEY`, a long random value (40 or more characters, from a password generator). It turns on the admin tool below. Treat it like a password and tick **Sensitive**.
 4. In MongoDB Atlas, open **Network Access** (under Security), click **Add IP Address**, choose **Allow access from anywhere** (`0.0.0.0/0`) and confirm. Vercel functions have no fixed IP addresses, so the database password is what protects the cluster. Use a long generated one.
 5. Deploy:
 
@@ -46,6 +48,16 @@ Environment variables are read at deploy time, so after changing `MONGODB_URI` r
 If `/health?db=1` reports `database_unavailable`: check the password in `MONGODB_URI` (special characters must be URL-encoded), check step 4, and look at the function log under the project's **Logs** tab.
 
 If every path answers with the health JSON, or with 404, the rewrite in `vercel.json` is not passing the path through. This could not be tested before the first deploy; the smoke script will show it straight away.
+
+### Resetting a player who lost their key
+
+A player who reinstalls Windows or moves to a new PC loses their key file and sees "This Steam account already enabled guilds on another PC". With `ADMIN_KEY` set you can let them back in:
+
+```powershell
+node scripts/admin.mjs reset 7656119xxxxxxxxxx
+```
+
+It asks for the admin key (or reads it from the `MELVOR2_ADMIN_KEY` environment variable). The player then clicks **Enable Guilds** again; their guilds and anything waiting on the marketplace are kept. Only do this for someone you are sure owns that Steam account, because whoever enables guilds with that Steam ID next gets the account.
 
 For lower latency, set the function region near the Atlas cluster in the Vercel project under **Settings**, **Functions**.
 
@@ -92,7 +104,11 @@ Ids: a player id is the SteamID64 as a string. A guild id is a 24-character hex 
 
 ### Identity
 
-The server cannot verify Steam logins. On first use the mod generates a random key (32 to 128 characters from `A-Z a-z 0-9 _ - + / =`), stores it locally and registers it. The server keeps only the SHA-256 hash. The first key registered for a Steam ID wins; there is no recovery if the key is lost, other than asking the server owner to delete the player document.
+The server cannot verify Steam logins. On first use the mod generates a random key (32 to 128 characters from `A-Z a-z 0-9 _ - + / =`), stores it locally and registers it. The server keeps only the SHA-256 hash. The first key registered for a Steam ID wins. If the key is lost, the server owner can reset it (see "Resetting a player who lost their key").
+
+Because Steam logins cannot be verified, anyone who can register can also talk to the API with their own program instead of the game, and nothing a client reports about its own bank, damage or levels can be checked. Set `REGISTER_CODE` to limit registration to people you gave the code to.
+
+Requests with a missing or wrong key are counted per IP address; after 30 in a minute that address gets `429` for the rest of the minute.
 
 ## Endpoints
 
@@ -101,7 +117,8 @@ The server cannot verify Steam logins. On first use the mod generates a random k
 | Method and path | Body | Result |
 | --- | --- | --- |
 | `GET /health` | | `{ok, service, protocol}`. Add `?db=1` to also ping the database. No headers needed. |
-| `POST /register` | `{steamId, name, key}` | `201 {player: {id, name}, created: true}` for a new Steam ID. `200` with `created: false` if the same key is presented again (also updates the name). `409 steam_id_claimed` for a different key. |
+| `POST /register` | `{steamId, name, key, code?}` | `201 {player: {id, name}, created: true}` for a new Steam ID. `200` with `created: false` if the same key is presented again (also updates the name), or when it sets a new key after an admin reset. `409 steam_id_claimed` for a different key. When the server has `REGISTER_CODE` set, a new Steam ID must send a matching `code`: `403 code_required` or `403 code_wrong` otherwise. |
+| `POST /admin/reset-player` | `{steamId}` | Needs the `X-Admin-Key` header (the server's `ADMIN_KEY`); `404` when no `ADMIN_KEY` is set. Forgets the player's key so their next register sets a new one. |
 | `GET /me` | | `{player, guilds: [{id, name, description, ownerId, createdAt, rank}], invites: [{guildId, guildName, by, byName, at}], requests: [{guildId, guildName, at}], limits: {maxGuilds, maxMembers}}` |
 | `PUT /me/profile` | `{skills: [{id, level}], gear: [{slot, item, qty}]}` | `{ok: true, updatedAt}`. Replaces my whole profile. See Profiles below. |
 | `GET /players/:id/profile` | | `{player: {id, name}, profile: {skills, gear, updatedAt} or null, status, lastSeen}`. Only for myself or a player I share a guild with; otherwise `403 forbidden`. Unknown player: `404 player_not_found`. |
@@ -163,8 +180,8 @@ A game id is `<Namespace>:<LocalId>`, where each part starts with an upper-case 
 | Method and path | Who | Body | Result |
 | --- | --- | --- | --- |
 | `POST /guilds` | anyone | `{name, description?}` | `201 {guild}`. The caller becomes owner. |
-| `GET /guilds/search?q=` | anyone | | `{guilds: [{..., memberCount}]}`, up to 20, name contains `q` (case-insensitive). An empty `q` lists the first 20. |
-| `GET /guilds/:id` | anyone | | `{guild: {..., memberCount, myRank, myPending}, members: [{id, name, rank, joinedAt, lastSeen, status}]}`. Non-members do not get `lastSeen` and `status`. Officers and the owner also get `requests` and `invites`: `[{playerId, name, by, at}]`. |
+| `GET /guilds/search?q=` | anyone | | `{guilds: [{..., memberCount}]}`, up to 20, name contains `q` (case-insensitive). An empty `q` lists the first 20. `ownerId` is left out. |
+| `GET /guilds/:id` | anyone | | `{guild: {..., memberCount, myRank, myPending}, members: [{id, name, rank, joinedAt, lastSeen, status}]}`. Non-members get an empty `members` list and no `ownerId`: who is in a guild is only shown to its members. Officers and the owner also get `requests` and `invites`: `[{playerId, name, by, at}]`. |
 | `PATCH /guilds/:id` | owner | `{name?, description?}` | `{guild}` |
 | `DELETE /guilds/:id` | owner | | Disbands: removes the guild, members, requests, invites and messages. |
 | `GET /guilds/:id/messages` | members | | `{messages}`: the latest 50, oldest first. |

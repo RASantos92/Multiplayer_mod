@@ -218,13 +218,19 @@ internal sealed class GuildService
 
     // ---- Enabling and account ----
 
-    public void Enable()
+    /// <summary>
+    /// <paramref name="testerCode"/> is what the person running the server hands out while it is in closed
+    /// testing; it is only needed the first time and is not saved.
+    /// </summary>
+    public void Enable(string testerCode = "")
     {
         if (Enabled || Busy || !SteamReady) return;
-        Register(Identity.Create(_steamId), isNew: true);
+        // Reuse a key that is already on this PC (for example after the server owner reset the account).
+        Identity? saved = Identity.Load(_steamId);
+        Register(saved ?? Identity.Create(_steamId), isNew: saved == null, testerCode.Trim());
     }
 
-    private void Register(Identity identity, bool isNew)
+    private void Register(Identity identity, bool isNew, string testerCode = "")
     {
         Busy = true;
         Changed?.Invoke();
@@ -233,6 +239,7 @@ internal sealed class GuildService
             w.WriteString("steamId", identity.SteamId);
             w.WriteString("name", SteamFriends.GetPersonaName());
             w.WriteString("key", identity.Key);
+            if (testerCode.Length > 0) w.WriteString("code", testerCode);
         });
         GuildApi.Post("/register", body, result =>
         {
@@ -248,8 +255,8 @@ internal sealed class GuildService
             else if (result.ErrorCode == "steam_id_claimed")
             {
                 Notice?.Invoke(isNew
-                    ? "This Steam account already enabled guilds on another PC or install. Its key file is needed to use it here."
-                    : "The saved guild key no longer matches the server.");
+                    ? "This Steam account already enabled guilds on another PC or install. Copy its key file here, or ask the person running the server to reset your guild account."
+                    : "The saved guild key no longer matches the server. Ask the person running the server to reset your guild account.");
             }
             else
             {

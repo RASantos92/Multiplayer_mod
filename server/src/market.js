@@ -266,7 +266,14 @@ export function createMarket({ store, now, guildCtx, requireRank, limits = {} })
           other: claim.buyerName ?? '', state: 'pending', at: date(), source: `paid:${claim._id}`,
         });
       }
-      await store.finishClaim(id, me, 'done');
+      if (!(await store.finishClaim(id, me, 'done'))) {
+        // Lost a race with this purchase being cancelled: the items went back, so the seller is not paid.
+        const after = await store.getClaim(id);
+        if (after?.state === 'failed') {
+          await store.deletePendingClaimBySource(`paid:${claim._id}`);
+          throw conflict('claim_failed', 'This purchase was already cancelled');
+        }
+      }
       return { ok: true };
     },
 
@@ -291,7 +298,8 @@ export function createMarket({ store, now, guildCtx, requireRank, limits = {} })
       for (const l of await store.liveListingsOf(filter)) await endListing({ _id: l._id }, 'cancelled', reason);
     },
     /** True while the player has anything on the market or waiting to be collected. */
-    hasUnfinished: async (playerId) => (await store.hasLiveListings(playerId)) || (await store.hasPendingClaims(playerId)),
+    hasUnfinished: async (playerId) =>
+      (await store.hasLiveListings(playerId)) || (await store.hasPendingClaims(playerId)) || (await store.hasPendingSales(playerId)),
     routes: [
       ['GET', 'guilds/:id/market', h.list],
       ['POST', 'guilds/:id/market', h.create],

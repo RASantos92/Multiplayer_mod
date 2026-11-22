@@ -262,3 +262,36 @@ test('sync carries pending claims and a market revision that moves on every chan
   await ok(buyer, 'POST', `${m}/${listing.id}/buy`, { qty: 1, price: 10 });
   assert.ok((await rev()) > r1);
 });
+
+test('a seller cannot delete their data while a buyer still has to complete a purchase', async () => {
+  const { other: seller, buyer, m } = await market(); // not the guild owner
+  const { listing } = await ok(seller, 'POST', m, logs({ qty: 2 }));
+  const { claim } = await ok(buyer, 'POST', `${m}/${listing.id}/buy`, { qty: 2, price: 10 }); // sold out, not yet paid
+  assert.deepEqual(await listingsOf(seller, m), []);
+  await fails(409, 'market_pending', seller, 'DELETE', '/me');
+  await ok(buyer, 'POST', `/claims/${claim.id}/confirm`);
+  await fails(409, 'market_pending', seller, 'DELETE', '/me'); // now the payout is waiting
+});
+
+test('a purchase cancelled while it is being confirmed does not pay the seller', async () => {
+  const { seller, buyer, m } = await market();
+  const { listing } = await ok(seller, 'POST', m, logs({ qty: 3 }));
+  for (let round = 0; round < 8; round++) {
+    const { claim } = await ok(buyer, 'POST', `${m}/${listing.id}/buy`, { qty: 1, price: 10 });
+    const [confirmed, failed] = await Promise.all([
+      call(buyer, 'POST', `/claims/${claim.id}/confirm`),
+      call(buyer, 'POST', `/claims/${claim.id}/fail`),
+    ]);
+    const left = (await listingsOf(seller, m)).find((l) => l.id === listing.id)?.qty ?? 0;
+    const paid = (await claimsOf(seller)).filter((c) => c.kind === 'payout');
+    // Either it was bought (one fewer listed, seller paid) or it was not (all still listed, nobody paid).
+    if (left === 3) {
+      assert.deepEqual(paid, [], `round ${round}: items went back but the seller was paid (${confirmed.status}/${failed.status})`);
+    } else {
+      assert.equal(left, 2);
+      assert.equal(paid.length, 1);
+      assert.equal(confirmed.status, 200);
+      return;
+    }
+  }
+});

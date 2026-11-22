@@ -83,6 +83,13 @@ export function createStore(db) {
     touchPlayer: (id, keyHash, set) =>
       players.findOneAndUpdate({ _id: id, keyHash }, { $set: set }, { returnDocument: 'after' }),
     deletePlayer: (id) => players.deleteOne({ _id: id }),
+    /** Admin: forget the player's key so their next register can set a new one. */
+    resetPlayerKey: (id) => players.updateOne({ _id: id }, { $set: { keyHash: null } }),
+    /** Sets a new key on a player whose key was reset. False if someone else got there first. */
+    async claimPlayer(id, keyHash, name) {
+      const r = await players.updateOne({ _id: id, keyHash: null }, { $set: { keyHash, name } });
+      return r.modifiedCount === 1;
+    },
     setProfile: (id, profile) => players.updateOne({ _id: id }, { $set: { profile } }),
     /** True when the two players are members of at least one common guild. */
     async shareGuild(a, b) {

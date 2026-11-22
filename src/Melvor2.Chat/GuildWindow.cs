@@ -39,6 +39,7 @@ internal sealed partial class GuildWindow
     private bool _manage;
     private bool _rebuildPending;
     private double _sinceDetail;
+    private string _testerCode = "";
 
     // Text typed into forms survives list rebuilds.
     private string _createName = "";
@@ -275,9 +276,13 @@ internal sealed partial class GuildWindow
                 "buying takes your gold and gives you the item, and your listings and offers are visible to your " +
                 "guild mates.\n\n" +
                 "It does not send your save or anything about your account. You can delete your guild data at any time."));
+            if (!update)
+            {
+                _left.AddChild(Input(_testerCode, "Tester code (if you were given one)", 64, text => _testerCode = text));
+            }
             Button enable = update
                 ? Action("Accept and continue", "TexturedActionButtonGreen8x", _service.AcceptConsent)
-                : Action("Enable Guilds", "TexturedActionButtonGreen8x", _service.Enable);
+                : Action("Enable Guilds", "TexturedActionButtonGreen8x", () => _service.Enable(_testerCode));
             enable.Disabled = _service.Busy || !_service.SteamReady;
             if (_service.Busy) enable.Text = "Connecting...";
             _left.AddChild(enable);

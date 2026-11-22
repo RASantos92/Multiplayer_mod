@@ -28,6 +28,7 @@ export function createMarketStore(db) {
       offers.createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
       claims.createIndex({ playerId: 1, state: 1 }),
       claims.createIndex({ state: 1, kind: 1, at: 1 }),
+      claims.createIndex({ sellerId: 1, state: 1 }, { partialFilterExpression: { sellerId: { $type: 'string' } } }),
       // One follow-up claim per cause (a payout per confirmed purchase, a return per cancelled listing...).
       claims.createIndex({ source: 1 }, { unique: true, partialFilterExpression: { source: { $type: 'string' } } }),
       // Finished claims are only kept for a while, as a record.
@@ -112,6 +113,10 @@ export function createMarketStore(db) {
     /** Moves a pending claim to `state`; returns it only for the one caller that made the change. */
     finishClaim: (id, playerId, state) =>
       claims.findOneAndUpdate({ _id: id, playerId, state: 'pending' }, { $set: { state, doneAt: new Date() } }, { returnDocument: 'before' }),
+    /** Purchases of this seller's items that the buyer's game has not completed yet. */
+    hasPendingSales: async (sellerId) => (await claims.countDocuments({ sellerId, kind: 'purchase', state: 'pending' }, { limit: 1 })) > 0,
+    /** Takes back a follow-up claim nobody has collected yet. */
+    deletePendingClaimBySource: (source) => claims.deleteOne({ source, state: 'pending' }),
     stalePurchases: (before, limit) => claims.find({ state: 'pending', kind: 'purchase', at: { $lt: before } }).limit(limit).toArray(),
 
     purgeMarketOfGuild: (guildId) => offers.deleteMany({ guildId }),

@@ -59,11 +59,11 @@ async function run() {
   check('health reports db: true', health.db === true);
   await expect('missing protocol header is refused', 426, null, 'GET', '/me', undefined, {});
 
-  await expect('register Alice', 201, null, 'POST', '/register', { steamId: alice.id, name: alice.name, key: alice.key });
+  await expect('register Alice', 201, null, 'POST', '/register', { steamId: alice.id, name: alice.name, key: alice.key, code: process.env.MELVOR2_TESTER_CODE });
   alice.registered = true;
-  await expect('register Bob', 201, null, 'POST', '/register', { steamId: bob.id, name: bob.name, key: bob.key });
+  await expect('register Bob', 201, null, 'POST', '/register', { steamId: bob.id, name: bob.name, key: bob.key, code: process.env.MELVOR2_TESTER_CODE });
   bob.registered = true;
-  await expect('register Alice again with the same key', 200, null, 'POST', '/register', { steamId: alice.id, name: alice.name, key: alice.key });
+  await expect('register Alice again with the same key', 200, null, 'POST', '/register', { steamId: alice.id, name: alice.name, key: alice.key, code: process.env.MELVOR2_TESTER_CODE });
   await expect('register Alice with another key is refused', 409, null, 'POST', '/register', { steamId: alice.id, name: 'Mallory', key: randomBytes(24).toString('hex') });
   await expect('wrong key is refused', 401, { id: alice.id, key: randomBytes(24).toString('hex') }, 'GET', '/me');
 
