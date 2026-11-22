@@ -63,7 +63,7 @@ The tests use `mongodb-memory-server`, which downloads a MongoDB binary on the f
 
 ## Protocol
 
-Every request and response body is JSON. Bodies are capped at 4 KB.
+Every request and response body is JSON. Bodies are capped at 4 KB, except `PUT /me/profile`, which allows 16 KB.
 
 Every request except `/health` must send `X-Mod-Protocol: 1`. A missing or lower value gets `426`.
 
@@ -77,7 +77,7 @@ Errors always look like this, with a suitable HTTP status:
 
 | Status | Codes |
 | --- | --- |
-| 400 | `invalid_json`, `invalid_steam_id`, `invalid_key`, `invalid_name`, `invalid_guild_name`, `invalid_description`, `invalid_message`, `invalid_status`, `invalid_cursor`, `invalid_rank`, `invalid_target`, `invalid_body`, `invalid_query`, `nothing_to_update` |
+| 400 | `invalid_json`, `invalid_steam_id`, `invalid_key`, `invalid_name`, `invalid_guild_name`, `invalid_description`, `invalid_message`, `invalid_status`, `invalid_profile`, `invalid_cursor`, `invalid_rank`, `invalid_target`, `invalid_body`, `invalid_query`, `nothing_to_update` |
 | 401 | `unauthorized` (unknown Steam ID or wrong key; register, then retry) |
 | 403 | `not_member`, `forbidden` |
 | 404 | `not_found`, `guild_not_found`, `player_not_found`, `member_not_found`, `request_not_found`, `invite_not_found` |
@@ -103,7 +103,9 @@ The server cannot verify Steam logins. On first use the mod generates a random k
 | `GET /health` | | `{ok, service, protocol}`. Add `?db=1` to also ping the database. No headers needed. |
 | `POST /register` | `{steamId, name, key}` | `201 {player: {id, name}, created: true}` for a new Steam ID. `200` with `created: false` if the same key is presented again (also updates the name). `409 steam_id_claimed` for a different key. |
 | `GET /me` | | `{player, guilds: [{id, name, description, ownerId, createdAt, rank}], invites: [{guildId, guildName, by, byName, at}], requests: [{guildId, guildName, at}], limits: {maxGuilds, maxMembers}}` |
-| `DELETE /me` | | Deletes my player record, memberships, requests, invites I sent and messages. `409 owns_guild` while I own a guild. The Steam ID can be registered again afterwards. |
+| `PUT /me/profile` | `{skills: [{id, level}], gear: [{slot, item, qty}]}` | `{ok: true, updatedAt}`. Replaces my whole profile. See Profiles below. |
+| `GET /players/:id/profile` | | `{player: {id, name}, profile: {skills, gear, updatedAt} or null, status, lastSeen}`. Only for myself or a player I share a guild with; otherwise `403 forbidden`. Unknown player: `404 player_not_found`. |
+| `DELETE /me` | | Deletes my player record (including status and profile), memberships, requests, invites I sent and messages. `409 owns_guild` while I own a guild. The Steam ID can be registered again afterwards. |
 | `POST /sync` | `{since?, status?, name?}` | See below. |
 
 ### `POST /sync`
@@ -113,7 +115,7 @@ Meant to be polled every 3 to 20 seconds. It sets my `lastSeen`, optionally my s
 Request:
 
 - `since`: the `cursor` string from the previous response. Leave it out on the first call to get the latest 100 messages across my guilds.
-- `status`: `{skill, level}` to set what I am doing (skill up to 40 characters, level an integer from 0 to 1000000), `null` to clear it, or leave it out to keep it.
+- `status`: `{skill, level}` to set what I am doing (skill up to 40 characters, level an integer from 0 to 1000000), `null` to clear it, or leave it out to keep it. It may carry an optional `action`, described below.
 - `name`: optional, updates my display name.
 
 Response:
@@ -124,7 +126,7 @@ Response:
   "cursor": "1795399999000-6b02...",
   "guilds": [
     { "id": "...", "name": "...", "rank": "member",
-      "members": [ { "id": "7656...", "name": "...", "rank": "owner", "joinedAt": 0, "lastSeen": 0, "status": { "skill": "Woodcutting", "level": 42, "at": 0 } } ] }
+      "members": [ { "id": "7656...", "name": "...", "rank": "owner", "joinedAt": 0, "lastSeen": 0, "status": { "skill": "Woodcutting", "level": 42, "at": 0, "action": { "entity": "Melvor:Woodcutting", "target": "Melvor:OakTree", "name": "Oak Tree" } } } ] }
   ],
   "messages": [ { "id": "...", "guildId": "...", "playerId": "7656...", "name": "...", "body": "...", "at": 0 } ],
   "invites": [ { "guildId": "...", "guildName": "...", "by": "7656...", "byName": "...", "at": 0 } ]
@@ -132,6 +134,29 @@ Response:
 ```
 
 Treat the cursor as opaque and send it back unchanged. Messages arrive oldest first, at most 200 per call; if there are more, the next call continues. The server does not repeat a message for the same cursor chain, but a message you posted yourself is returned both by the `POST` and by the next sync, so drop messages whose `id` you already have. Compare `lastSeen` with `now` to decide who is online. After joining a guild, load its backlog with `GET /guilds/:id/messages`.
+
+#### Current action (mod v0.3)
+
+`status.action` says exactly what the player is doing: `{entity, target, area?, name}`.
+
+- `entity`, `target` and the optional `area` are game ids (see below). Combat uses `area`.
+- `name` is the text to display, 1 to 60 characters after control characters are removed.
+- A status sent without `action` (or with `action: null`) clears the stored action. `status: null` clears the whole status. Leaving `status` out keeps both.
+- A malformed action gets `400 invalid_status` and nothing is stored.
+- The action is returned inside `status` wherever a status is returned: sync members, `GET /guilds/:id` members (for fellow members) and `GET /players/:id/profile`. The `action` key is absent when there is none. Unknown fields inside `action` are dropped.
+
+A game id is `<Namespace>:<LocalId>`, where each part starts with an upper-case letter followed by letters and digits (`^[A-Z][A-Za-z0-9]*$`), at most 80 characters in total. Example: `Melvor:OakTree`. The server checks the shape only, not whether the id exists in the game.
+
+### Profiles (mod v0.3)
+
+`PUT /me/profile` stores a snapshot of my skills and equipped gear on my player record.
+
+- `skills`: up to 60 entries of `{id, level}`; `id` is a game id, `level` an integer from 0 to 1000. Each skill id may appear once.
+- `gear`: up to 40 entries of `{slot, item, qty}`; `slot` and `item` are game ids, `qty` an integer from 0 to 1000000000. Each slot may appear once; the same item may sit in several slots.
+- The upload replaces the whole profile. A list that is left out is stored as empty. Unknown fields are dropped. Anything invalid gets `400 invalid_profile` and the stored profile stays as it was.
+- The body may be up to 16 KB. Uploads count against the write rate limit, so send one when something changed, not on every poll.
+
+`GET /players/:id/profile` returns the profile together with the player's name, status and `lastSeen`. `profile` is `null` until the player has uploaded one. Access is checked on every call: the caller must be that player or currently be a member of at least one guild the player is in. A pending join request or invite does not count, and access ends when either side leaves, is kicked, or the guild is disbanded.
 
 ### Guilds
 
@@ -169,6 +194,7 @@ Treat the cursor as opaque and send it back unchanged. Messages arrive oldest fi
 - At most 3 guilds per player and 50 members per guild.
 - Guild name: 3 to 24 characters from letters, digits, spaces, `-` and `_`; unique regardless of case.
 - Description: up to 200 characters. Message: 1 to 300 characters. Player name: 1 to 32 characters. Control characters are removed from all three; tabs and line breaks become spaces.
+- Status action: game ids up to 80 characters, display name 1 to 60 characters. Profile: up to 60 skills (level 0 to 1000) and 40 gear slots (quantity 0 to 1000000000), body up to 16 KB.
 - At most 10 pending join requests per player, 20 pending invites per player and 100 pending requests and invites per guild.
 - Rate limits, counted in MongoDB: 60 writes per minute and 10 messages per 10 seconds per player, 60 syncs per minute per player, 120 reads per minute per player, 30 registrations per hour per IP address.
 - Messages are deleted automatically after 14 days.
@@ -179,7 +205,7 @@ Database `melvor2guilds` (or `MONGODB_DB`). Indexes are created on the first req
 
 | Collection | Fields | Indexes |
 | --- | --- | --- |
-| `players` | `_id` (Steam ID), `name`, `keyHash`, `createdAt`, `lastSeen`, `status {skill, level, at}` | |
+| `players` | `_id` (Steam ID), `name`, `keyHash`, `createdAt`, `lastSeen`, `status {skill, level, at, action? {entity, target, area?, name}}`, `profile? {skills [{id, level}], gear [{slot, item, qty}], updatedAt}` | |
 | `guilds` | `name`, `nameLower`, `description`, `ownerId`, `createdAt` | unique `nameLower`; `ownerId` |
 | `members` | `guildId`, `playerId`, `rank`, `joinedAt` | unique `guildId + playerId`; `playerId` |
 | `requests` | `guildId`, `playerId`, `kind` (`request` or `invite`), `by`, `at` | unique `guildId + playerId`; `playerId + kind` |

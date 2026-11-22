@@ -19,6 +19,9 @@ USE (load a save first)
   - Click Guild in the top bar, next to Guide.
   - Click Enable Guilds once. Then Create Guild, or Find Guild and Ask to join.
   - Owners use the Owner tab to invite friends, approve requests and set ranks.
+  - Click a member's name to see their skill levels and equipped gear.
+  - Click what an online member is doing to do the same action. While you are
+    both online on the exact same action, you each get +5% XP in that skill.
 
   Chat
   - Click the speech-bubble icon in the bottom bar, or press F8.
@@ -44,7 +47,9 @@ PRIVACY
   Guilds use a small online server run by the mod's author. Nothing is sent to
   it until you click Enable Guilds. After that it receives your Steam ID and
   Steam name, your guilds and rank, your guild chat messages (kept 14 days),
-  and the skill and level you are training.
+  what you are doing right now, all your skill levels and your equipped gear.
+  Guild mates can see these. The +5% party bonus is temporary and never saved,
+  but XP earned with it stays on your character.
   The mod never reads or sends your save and does not use the game's cloud account.
 
 This is a fan-made mod, not supported by the game's developers. Use at your own risk.

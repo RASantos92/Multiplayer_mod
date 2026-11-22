@@ -20,6 +20,24 @@ internal static class Icons
 
     public static Texture2D Chat => s_chat ??= FromSvg(ChatSvg);
 
+    private static readonly Dictionary<string, Texture2D?> s_skills = new();
+
+    /// <summary>
+    /// The game's icon for a skill, looked up by its display name ("Fishing" → res://Assets/Icons/Fishing.png).
+    /// Returns null when there is no match, for example if the other player's game is not in English.
+    /// </summary>
+    public static Texture2D? Skill(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        if (s_skills.TryGetValue(name, out Texture2D? cached)) return cached;
+
+        // Names come from other players via the server, so only plain letters and digits reach a file path.
+        string file = new string(name.Where(char.IsAsciiLetterOrDigit).ToArray());
+        Texture2D? texture = file.Length == 0 ? null : Game("res://Assets/Icons/" + file + ".png");
+        s_skills[name] = texture;
+        return texture;
+    }
+
     /// <summary>A texture shipped with the game, or null if the game no longer has it.</summary>
     public static Texture2D? Game(string path) =>
         ResourceLoader.Exists(path) ? ResourceLoader.Load<Texture2D>(path) : null;

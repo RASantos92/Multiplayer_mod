@@ -1,5 +1,12 @@
+using GamesByMalcs.Melvor2;
+using GamesByMalcs.Melvor2.Data.Items;
+using GamesByMalcs.Melvor2.Entities;
 using GamesByMalcs.Melvor2.GameMenus;
+using GamesByMalcs.Melvor2.InfoIcons;
+using GamesByMalcs.Melvor2.Localization;
+using GamesByMalcs.Melvor2.UIServices;
 using Godot;
+using Melvor2.Chat.GameState;
 using Melvor2.Chat.Guilds;
 using Steamworks;
 
@@ -13,12 +20,13 @@ namespace Melvor2.Chat;
 /// </summary>
 internal sealed class GuildWindow
 {
-    private enum Mode { Empty, Guild, Create, Find }
+    private enum Mode { Empty, Guild, Create, Find, Profile }
 
     private readonly GameView _gameView;
     private readonly GuildService _service;
     private readonly PanelContainer _backdrop;
     private readonly VBoxContainer _left;
+    private readonly VBoxContainer _leftFooter;
     private readonly HBoxContainer _tabs;
     private readonly Button _membersButton;
     private readonly Button _manageButton;
@@ -38,6 +46,11 @@ internal sealed class GuildWindow
     private string _settingsName = "";
     private string _settingsDescription = "";
     private List<SearchHit>? _hits;
+
+    // Profile page state.
+    private MemberInfo? _profileMember;
+    private ProfileData? _profile;
+    private bool _profileLoading;
 
     public bool IsOpen => GodotObject.IsInstanceValid(_backdrop) && _backdrop.Visible;
 
@@ -80,11 +93,16 @@ internal sealed class GuildWindow
         _status = new Label { Text = "", AutowrapMode = TextServer.AutowrapMode.WordSmart, HorizontalAlignment = HorizontalAlignment.Center };
         rows.AddChild(_status);
 
+        // The guild list scrolls; the footer stays pinned to the bottom of the column.
         _left = new VBoxContainer();
         _left.AddThemeConstantOverride("separation", 6);
-        var leftScroll = Scroll(_left);
-        leftScroll.CustomMinimumSize = new Vector2(290, 0);
-        columns.AddChild(style.MakeSection("Your Guilds", leftScroll));
+        _leftFooter = new VBoxContainer();
+        _leftFooter.AddThemeConstantOverride("separation", 6);
+        var leftColumn = new VBoxContainer { CustomMinimumSize = new Vector2(290, 0) };
+        leftColumn.AddThemeConstantOverride("separation", 6);
+        leftColumn.AddChild(Scroll(_left));
+        leftColumn.AddChild(_leftFooter);
+        columns.AddChild(style.MakeSection("Your Guilds", leftColumn));
 
         var right = new VBoxContainer { CustomMinimumSize = new Vector2(640, 0) };
         right.AddThemeConstantOverride("separation", 8);
@@ -111,10 +129,12 @@ internal sealed class GuildWindow
 
         service.Changed += OnServiceChanged;
         service.Notice += OnNotice;
+        ModEntry.Boost.Changed += OnServiceChanged; // The bonus line and Join buttons depend on it.
         _backdrop.TreeExiting += () =>
         {
             service.Changed -= OnServiceChanged;
             service.Notice -= OnNotice;
+            ModEntry.Boost.Changed -= OnServiceChanged;
         };
         Rebuild();
     }
@@ -180,7 +200,7 @@ internal sealed class GuildWindow
         }
         _rebuildPending = false;
 
-        if (_mode == Mode.Guild && _service.Find(_guildId) == null)
+        if (_mode is Mode.Guild or Mode.Profile && _service.Find(_guildId) == null)
         {
             _mode = Mode.Empty;
             _guildId = null;
@@ -219,15 +239,23 @@ internal sealed class GuildWindow
     private void RebuildLeft()
     {
         Clear(_left);
+        Clear(_leftFooter);
 
         if (!_service.Enabled)
         {
+            bool update = _service.NeedsConsent;
             _left.AddChild(Text(
+                (update ? "Guilds now do more, so please read this again.\n\n" : "") +
                 "Guilds use a small online server run by the person who shared this mod.\n\n" +
-                "Enabling guilds sends your Steam ID and Steam name, the guilds you create or join, " +
-                "your guild chat messages, and the skill and level you are training.\n\n" +
+                "Enabling guilds sends your Steam ID and Steam name, the guilds you create or join, your guild " +
+                "chat messages, what you are training right now, all your skill levels, and your equipped gear. " +
+                "Guild mates can see these.\n\n" +
+                "It also turns on the party bonus: +5% skill XP while a guild mate is online doing the exact " +
+                "same action as you. XP earned that way stays on your character.\n\n" +
                 "It does not send your save or anything about your account. You can delete your guild data at any time."));
-            Button enable = Action("Enable Guilds", "TexturedActionButtonGreen8x", _service.Enable);
+            Button enable = update
+                ? Action("Accept and continue", "TexturedActionButtonGreen8x", _service.AcceptConsent)
+                : Action("Enable Guilds", "TexturedActionButtonGreen8x", _service.Enable);
             enable.Disabled = _service.Busy || !_service.SteamReady;
             if (_service.Busy) enable.Text = "Connecting...";
             _left.AddChild(enable);
@@ -268,17 +296,18 @@ internal sealed class GuildWindow
             }
         }
 
-        _left.AddChild(new Control { SizeFlagsVertical = Control.SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0, 8) });
+        _left.AddChild(new Control { CustomMinimumSize = new Vector2(0, 8) });
         _left.AddChild(Action("Create Guild", "TexturedActionButtonGreen8x", () => { _mode = Mode.Create; Rebuild(); }));
         _left.AddChild(Action("Find Guild", "TexturedButton8x", () => { _mode = Mode.Find; Rebuild(); }));
-        _left.AddChild(Confirm("Delete my guild data", "TexturedButton8x", _service.DeleteMyData));
+
+        _leftFooter.AddChild(Confirm("Delete my guild data", "TexturedButtonCancel8x", _service.DeleteMyData));
     }
 
     private void RebuildPage()
     {
         Clear(_page);
-        GuildInfo? guild = _mode == Mode.Guild ? _service.Find(_guildId) : null;
-        _tabs.Visible = guild != null;
+        GuildInfo? guild = _mode is Mode.Guild or Mode.Profile ? _service.Find(_guildId) : null;
+        _tabs.Visible = guild != null && _mode == Mode.Guild;
 
         if (!_service.Enabled)
         {
@@ -293,6 +322,9 @@ internal sealed class GuildWindow
                 break;
             case Mode.Find:
                 BuildFind();
+                break;
+            case Mode.Profile when guild != null && _profileMember != null:
+                BuildProfile(guild);
                 break;
             case Mode.Guild when guild != null:
                 _manageButton.Text = guild.Rank == "owner" ? "Owner" : "Manage";
@@ -311,6 +343,7 @@ internal sealed class GuildWindow
     {
         _page.AddChild(Heading(guild.Name));
         if (guild.Description.Length > 0) _page.AddChild(Text(guild.Description));
+        AddBonusLine();
 
         List<MemberInfo> members = MembersOf(guild);
         int online = members.Count(IsOnline);
@@ -320,11 +353,15 @@ internal sealed class GuildWindow
             bool isOnline = IsOnline(member);
             Label dot = Text("●");
             dot.Modulate = isOnline ? new Color(0.35f, 0.85f, 0.35f) : new Color(0.45f, 0.45f, 0.45f);
-            Label name = Text(member.Name + (member.Id == _service.SteamId ? " (you)" : ""));
-            name.CustomMinimumSize = new Vector2(220, 0);
+            // The name opens the member's profile.
+            MemberInfo shown = member;
+            Button name = Action(member.Name + (member.Id == _service.SteamId ? " (you)" : ""), "TexturedButton8x", () => OpenProfile(shown));
+            name.CustomMinimumSize = new Vector2(220, 32);
+            name.ClipText = true;
+            name.TooltipText = "View profile";
             Label rank = Text(RankName(member.Rank));
             rank.CustomMinimumSize = new Vector2(80, 0);
-            _page.AddChild(Row(dot, name, rank, Grow(Text(Activity(member, isOnline)))));
+            _page.AddChild(Row(dot, name, rank, Grow(ActivityControl(member, isOnline))));
         }
 
         _page.AddChild(new Control { CustomMinimumSize = new Vector2(0, 8) });
@@ -465,6 +502,199 @@ internal sealed class GuildWindow
         }
     }
 
+    // ---- Profile, join and party bonus ----
+
+    private void AddBonusLine()
+    {
+        PartyBoost boost = ModEntry.Boost;
+        if (!boost.Active) return;
+        Label line = Text("Party bonus active: +5% " + boost.SkillName + " XP, training with " + boost.PartnerName + ".");
+        line.Modulate = new Color(0.45f, 0.9f, 0.45f);
+        _page.AddChild(line);
+    }
+
+    /// <summary>
+    /// What a member is doing. If it is something the local character could do too, it is a Join button;
+    /// otherwise plain text with the reason in the tooltip.
+    /// </summary>
+    private Control ActivityControl(MemberInfo member, bool online)
+    {
+        if (!online || !member.HasAction || member.Id == _service.SteamId)
+        {
+            var plain = new HBoxContainer();
+            plain.AddThemeConstantOverride("separation", 6);
+            plain.AddChild(SkillIcon(online ? member : null));
+            plain.AddChild(Grow(Text(Activity(member, online))));
+            return plain;
+        }
+
+        string label = member.ActionName.Length > 0 ? member.ActionName : member.Skill;
+        if (member.Level > 0) label += "  (level " + member.Level + ")";
+
+        Game? game = ModEntry.CurrentGame();
+        JoinCheck check = game == null
+            ? new JoinCheck(JoinState.Unknown, "Not available right now.")
+            : ActionJoiner.Check(game, member.ActionEntity, member.ActionTarget);
+
+        string entity = member.ActionEntity;
+        string target = member.ActionTarget;
+        Button join = Action(label, check.State == JoinState.Already ? "TexturedActionButtonGreen8x" : "TexturedButton8x", () => Join(entity, target));
+        join.Icon = Icons.Skill(LocalId(member.ActionEntity));
+        join.ExpandIcon = true;
+        join.AddThemeConstantOverride("icon_max_width", 24);
+        join.Alignment = HorizontalAlignment.Left;
+        join.ClipText = true;
+        join.CustomMinimumSize = new Vector2(0, 32);
+        join.Disabled = check.State != JoinState.Ready;
+        join.TooltipText = check.State switch
+        {
+            JoinState.Ready => "Click to do this too. While you are both on it, you each get +5% XP.",
+            JoinState.Already => "You are training this together.",
+            _ => check.Reason,
+        };
+        return join;
+    }
+
+    private void Join(string entityId, string targetId)
+    {
+        Game? game = ModEntry.CurrentGame();
+        if (game == null)
+        {
+            OnNotice("Not available right now.");
+            return;
+        }
+        JoinCheck result = ActionJoiner.Join(game, entityId, targetId);
+        OnNotice(result.State == JoinState.Ready ? "Joined. The party bonus starts within a few seconds." : result.Reason);
+        Rebuild();
+    }
+
+    private void OpenProfile(MemberInfo member)
+    {
+        _mode = Mode.Profile;
+        _profileMember = member;
+        _profile = null;
+        _profileLoading = true;
+        string id = member.Id;
+        _service.LoadProfile(id, profile =>
+        {
+            if (_profileMember?.Id != id) return;
+            _profile = profile;
+            _profileLoading = false;
+            if (IsOpen && _mode == Mode.Profile) RebuildPage();
+        });
+        RebuildPage();
+    }
+
+    private void BuildProfile(GuildInfo guild)
+    {
+        // Use the freshest copy of this member from the latest sync, if they are still in the guild.
+        MemberInfo member = MembersOf(guild).FirstOrDefault(m => m.Id == _profileMember!.Id) ?? _profileMember!;
+        bool online = IsOnline(member);
+
+        _page.AddChild(Row(Action("< Back", "TexturedButton8x", () => { _mode = Mode.Guild; RebuildPage(); }),
+            Grow(Heading(member.Name + "  -  " + RankName(member.Rank) + " of " + guild.Name))));
+
+        _page.AddChild(Heading("Right now"));
+        _page.AddChild(ActivityControl(member, online));
+
+        if (_profileLoading)
+        {
+            _page.AddChild(Text("Loading profile..."));
+            return;
+        }
+        if (_profile == null || !_profile.Shared)
+        {
+            _page.AddChild(Text("This member has not shared a profile yet. They need the latest version of the mod."));
+            return;
+        }
+
+        Game? game = ModEntry.CurrentGame();
+
+        _page.AddChild(Heading("Skills  (total level " + _profile.Skills.Sum(x => x.Level) + ")"));
+        var skills = new GridContainer { Columns = 3 };
+        skills.AddThemeConstantOverride("h_separation", 18);
+        skills.AddThemeConstantOverride("v_separation", 4);
+        foreach (ProfileSkill skill in _profile.Skills)
+        {
+            string name = LocalId(skill.Id);
+            Texture2D? icon = Icons.Skill(name);
+            if (game != null && game.Entities.TryGetObjectById(skill.Id, out GameEntity? entity) && entity != null)
+            {
+                name = entity.DisplayName.Text;
+                icon = entity.Icon ?? icon;
+            }
+            Label label = Text(name);
+            label.CustomMinimumSize = new Vector2(120, 0);
+            Label level = Text(skill.Level.ToString());
+            level.CustomMinimumSize = new Vector2(28, 0);
+            level.HorizontalAlignment = HorizontalAlignment.Right;
+            skills.AddChild(Row(IconRect(icon, 22), label, level));
+        }
+        _page.AddChild(skills);
+
+        _page.AddChild(Heading("Equipped gear"));
+        if (_profile.Gear.Count == 0) _page.AddChild(Text("Nothing equipped."));
+        var gear = new GridContainer { Columns = 2 };
+        gear.AddThemeConstantOverride("h_separation", 18);
+        gear.AddThemeConstantOverride("v_separation", 4);
+        foreach (ProfileGear piece in _profile.Gear)
+        {
+            gear.AddChild(GearEntry(game, piece));
+        }
+        _page.AddChild(gear);
+    }
+
+    /// <summary>One equipped item: the game's own item icon (with its tooltip) when available, plus the name.</summary>
+    private static Control GearEntry(Game? game, ProfileGear piece)
+    {
+        string name = LocalId(piece.Item);
+        Control icon = IconRect(Icons.Game("res://Assets/Items/" + name + ".png"), 28);
+
+        if (game != null && game.Data.TryGetObject<Item>(piece.Item, out Item? item) && item != null)
+        {
+            name = ((ILocalizedString)item.DisplayName).Text;
+            try
+            {
+                ItemInfoIcon native = UIServiceLocator.ItemInfoIconPool.GetNode();
+                native.SetItemQuantity(item, (int)Math.Clamp(piece.Quantity, 1, int.MaxValue));
+                native.SetLabelVisible(piece.Quantity > 1);
+                icon = native;
+            }
+            catch (Exception)
+            {
+                icon = IconRect(item.Icon, 28);
+            }
+        }
+
+        Label label = Text(name + (piece.Quantity > 1 ? "  x" + piece.Quantity : "") + "\n" + LocalId(piece.Slot));
+        label.CustomMinimumSize = new Vector2(200, 0);
+        return Row(icon, label);
+    }
+
+    private static TextureRect SkillIcon(MemberInfo? member)
+    {
+        Texture2D? texture = member == null ? null
+            : member.HasAction ? Icons.Skill(LocalId(member.ActionEntity)) ?? Icons.Skill(member.Skill)
+            : Icons.Skill(member.Skill);
+        return IconRect(texture, 24);
+    }
+
+    private static TextureRect IconRect(Texture2D? texture, int size) => new()
+    {
+        Texture = texture,
+        CustomMinimumSize = new Vector2(size, size),
+        ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+        StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+        SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+    };
+
+    /// <summary>"MelvorBase:Fishing" to "Fishing".</summary>
+    private static string LocalId(string id)
+    {
+        int colon = id.IndexOf(':');
+        return colon >= 0 ? id.Substring(colon + 1) : id;
+    }
+
     // ---- Data helpers ----
 
     private List<MemberInfo> MembersOf(GuildInfo guild)
@@ -478,6 +708,7 @@ internal sealed class GuildWindow
 
     private string Activity(MemberInfo member, bool online)
     {
+        if (online && member.ActionName.Length > 0) return member.ActionName + " (level " + member.Level + ")";
         if (online) return member.Skill.Length > 0 ? member.Skill + " (level " + member.Level + ")" : "Online";
         if (member.LastSeen <= 0) return "Offline";
         TimeSpan ago = TimeSpan.FromMilliseconds(Math.Max(0, _service.ServerNow - member.LastSeen));

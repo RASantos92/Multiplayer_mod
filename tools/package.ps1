@@ -1,7 +1,7 @@
 # Builds dist\Melvor2Chat.zip for friends (upload it to a GitHub release): mod DLLs, a self-contained patcher
 # (no .NET install needed on their PC) and double-click install/uninstall scripts.
 # Contains none of the game's own files.
-param([string]$Version = '0.2.0')
+param([string]$Version = '0.3.0')
 
 . "$PSScriptRoot\common.ps1"
 $dotnet = (Get-Command dotnet -ErrorAction SilentlyContinue).Source

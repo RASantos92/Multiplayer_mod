@@ -14,13 +14,24 @@ internal sealed class Identity
     private static readonly string s_dir = Path.Combine(OS.GetUserDataDir(), "mod-data");
     private static readonly string s_file = Path.Combine(s_dir, "guild-identity.json");
 
+    /// <summary>
+    /// Version of the "what guilds send" notice. Raise it whenever the mod starts sending or doing something
+    /// new, so players who agreed to an older notice are asked again before it takes effect.
+    /// 2 = adds skill levels, equipped gear, current action ids and the party XP bonus.
+    /// </summary>
+    public const int CurrentConsent = 2;
+
     public string SteamId { get; }
     public string Key { get; }
 
-    private Identity(string steamId, string key)
+    /// <summary>The notice version this player accepted.</summary>
+    public int Consent { get; set; }
+
+    private Identity(string steamId, string key, int consent)
     {
         SteamId = steamId;
         Key = key;
+        Consent = consent;
     }
 
     public string Auth => SteamId + ":" + Key;
@@ -34,7 +45,8 @@ internal sealed class Identity
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(s_file));
             string savedId = doc.RootElement.Str("steamId");
             string key = doc.RootElement.Str("key");
-            return savedId == steamId && key.Length >= 32 ? new Identity(savedId, key) : null;
+            int consent = (int)doc.RootElement.Long("consent", 1); // Files from v0.2 have no field: notice 1.
+            return savedId == steamId && key.Length >= 32 ? new Identity(savedId, key, consent) : null;
         }
         catch (Exception e)
         {
@@ -47,7 +59,7 @@ internal sealed class Identity
     {
         // 36 random bytes become 48 characters from the set the server accepts.
         string key = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(36));
-        return new Identity(steamId, key);
+        return new Identity(steamId, key, CurrentConsent);
     }
 
     public void Save()
@@ -57,6 +69,7 @@ internal sealed class Identity
         {
             w.WriteString("steamId", SteamId);
             w.WriteString("key", Key);
+            w.WriteNumber("consent", Consent);
         }));
     }
 
