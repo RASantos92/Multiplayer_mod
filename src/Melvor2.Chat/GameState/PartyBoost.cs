@@ -2,13 +2,16 @@ using System.Text.Json;
 using GamesByMalcs.Melvor2;
 using GamesByMalcs.Melvor2.Components.Actions;
 using GamesByMalcs.Melvor2.Data;
+using GamesByMalcs.Melvor2.Entities.Combat;
 using GamesByMalcs.Melvor2.Localization;
 using GamesByMalcs.Melvor2.Modifiers;
+using Melvor2.Chat.Guilds;
 
 namespace Melvor2.Chat.GameState;
 
 /// <summary>
-/// +5% skill XP while a guild mate is online doing the exact same action.
+/// +5% skill XP for every guild mate who is online doing the exact same action (up to four of them).
+/// In combat the bonus goes on each combat skill, because combat has no single experience pool.
 ///
 /// The bonus is a normal game modifier added through the game's ModifierSystem under the source name
 /// "Guild Party Bonus". The game never writes modifiers to the save, so it cannot stick to a character.
@@ -40,7 +43,17 @@ internal sealed class PartyBoost
     /// <summary>True while the bonus modifier is in place.</summary>
     public bool Active => _boostedKey != null;
 
+    /// <summary>The other players, as "Ann, Bob".</summary>
     public string PartnerName { get; private set; } = "";
+
+    /// <summary>How many other players the bonus counts.</summary>
+    public int Partners { get; private set; }
+
+    /// <summary>The whole bonus as a fraction: 0.10 with two other players.</summary>
+    public double TotalPercent => Percent * Partners;
+
+    /// <summary>"+10%"</summary>
+    public string PercentText => "+" + Math.Round(TotalPercent * 100) + "%";
 
     public string SkillName { get; private set; } = "";
 
@@ -50,10 +63,10 @@ internal sealed class PartyBoost
     private bool _changedPending;
 
     /// <summary>
-    /// Main thread, game accessible. <paramref name="partner"/> is the name of an online guild mate on the same
-    /// action according to a sync that finished at <paramref name="syncedAtUtc"/>, or null if there is none.
+    /// Main thread, game accessible. <paramref name="party"/> is the online guild mates on the same action
+    /// according to a sync that finished at <paramref name="syncedAtUtc"/>; empty if there are none.
     /// </summary>
-    public void Update(Game game, ActivityInfo? mine, ActionComponent? component, string? partner, DateTime syncedAtUtc)
+    public void Update(Game game, ActivityInfo? mine, ActionComponent? component, IReadOnlyList<MemberInfo> party, DateTime syncedAtUtc)
     {
         if (!ReferenceEquals(game, _game))
         {
@@ -66,18 +79,21 @@ internal sealed class PartyBoost
         }
 
         DateTime now = DateTime.UtcNow;
-        bool wanted = mine != null && component != null && partner != null
+        int count = Math.Min(party.Count, GuildService.MaxPartners);
+        bool wanted = mine != null && component != null && count > 0
             && (now - syncedAtUtc).TotalSeconds < LeaseSeconds;
+        string names = string.Join(", ", party.Take(count).Select(p => p.Name));
 
-        if (wanted && mine!.Key == _boostedKey)
+        // The key includes the head count, so the bonus is rebuilt when someone joins or leaves.
+        if (wanted && mine!.Key + "#" + count == _boostedKey)
         {
             _leaseUntilUtc = syncedAtUtc.AddSeconds(LeaseSeconds);
-            PartnerName = partner!;
+            PartnerName = names;
         }
         else
         {
             if (_boostedKey != null) Remove();
-            if (wanted) Add(game, mine!, component!, partner!, syncedAtUtc);
+            if (wanted) Add(game, mine!, component!, count, names, syncedAtUtc);
         }
 
         if (_changedPending)
@@ -98,7 +114,7 @@ internal sealed class PartyBoost
         }
     }
 
-    private void Add(Game game, ActivityInfo mine, ActionComponent component, string partner, DateTime syncedAtUtc)
+    private void Add(Game game, ActivityInfo mine, ActionComponent component, int count, string partner, DateTime syncedAtUtc)
     {
         if (_unsupported.Contains(mine.EntityId)) return;
         try
@@ -106,28 +122,46 @@ internal sealed class PartyBoost
             _modifiers ??= GameAccess.Modifiers(game);
             if (_modifiers == null) throw new InvalidOperationException("modifier system not found");
 
-            // The same data shape the game's own bonuses use, scoped to this one skill's experience.
-            string json = "{\"Global\":[],\"Component\":[{\"Stat\":{\"StatsType\":\"MelvorBase:Experience\",\"Name\":\"PercentXPGained\"},"
-                + "\"LocalContext\":{\"Component\":{\"Entity\":" + JsonSerializer.Serialize(mine.EntityId) + ",\"Component\":\"Experience\"}},"
-                + "\"Value\":" + Percent.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}]}";
+            // The same data shape the game's own bonuses use, scoped to the experience of the skill being
+            // trained. Combat trains several skills, so it gets one entry per combat skill.
+            var targets = new List<(string Entity, string Component)>();
+            if (component.Entity is CombatEntity combat)
+            {
+                foreach (var level in combat.Player.CombatLevels.ActiveLevels.Keys)
+                {
+                    targets.Add((level.Component.Entity.Id, level.Component.Id));
+                }
+            }
+            else
+            {
+                targets.Add((mine.EntityId, "Experience"));
+            }
+            if (targets.Count == 0) throw new InvalidOperationException("no experience component to boost");
+
+            string value = (Percent * count).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            string json = "{\"Global\":[],\"Component\":[" + string.Join(",", targets.Select(t =>
+                "{\"Stat\":{\"StatsType\":\"MelvorBase:Experience\",\"Name\":\"PercentXPGained\"},"
+                + "\"LocalContext\":{\"Component\":{\"Entity\":" + JsonSerializer.Serialize(t.Entity)
+                + ",\"Component\":" + JsonSerializer.Serialize(t.Component) + "}},\"Value\":" + value + "}")) + "]}";
             using JsonDocument doc = JsonDocument.Parse(json);
             var values = new ModifierValues(game.Data, doc.RootElement);
 
             _modifiers.Remove(_source); // Never stack: at most one party bonus exists.
             _modifiers.Add(_source, values);
 
-            _boostedKey = mine.Key;
+            _boostedKey = mine.Key + "#" + count;
+            Partners = count;
             _leaseUntilUtc = syncedAtUtc.AddSeconds(LeaseSeconds);
             PartnerName = partner;
             SkillName = mine.SkillName;
             _hooked = component;
             component.Ticked += OnTicked;
             _changedPending = true;
-            ModEntry.Log("Party bonus on: " + mine.Key + " with " + partner);
+            ModEntry.Log("Party bonus on: " + mine.Key + " x" + count + " with " + partner);
         }
         catch (Exception e)
         {
-            // For example Combat has no single "Experience" component. Do not retry every frame.
+            // The game refused the modifier for this activity. Do not retry every frame.
             _unsupported.Add(mine.EntityId);
             ModEntry.Log("Party bonus not available for " + mine.EntityId + ": " + e.Message);
         }

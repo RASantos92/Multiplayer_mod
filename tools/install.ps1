@@ -7,6 +7,7 @@
 param([string]$GameDir)
 
 . "$PSScriptRoot\common.ps1"
+. "$PSScriptRoot\sign.ps1"
 $GameDir = Get-GameDir $GameDir
 Assert-GameClosed
 
@@ -35,6 +36,11 @@ foreach ($proj in 'tools\Melvor2.Patcher', 'src\Melvor2.ModLoader', 'src\Melvor2
     & $dotnet build (Join-Path $RepoRoot $proj) -c Release -v q --nologo | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Build failed: $proj" }
 }
+
+# Sign the freshly built DLLs when signing is configured, so Smart App Control accepts this dev build too.
+$built = @((Join-Path $RepoRoot "src\Melvor2.ModLoader\bin\Release\net10.0\$LoaderDllName"),
+           (Join-Path $RepoRoot 'src\Melvor2.Chat\bin\Release\net10.0\Melvor2.Chat.dll'))
+Invoke-CodeSign -Path $built | Out-Null
 
 Backup-Saves
 

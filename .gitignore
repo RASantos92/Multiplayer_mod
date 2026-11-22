@@ -1,4 +1,4 @@
-﻿game-ref/
+game-ref/
 decompiled/
 save-backups/
 bin/
@@ -6,3 +6,4 @@ obj/
 dist/
 *.user
 .vs/
+tools/signing.local.json

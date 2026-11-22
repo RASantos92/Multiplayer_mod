@@ -130,11 +130,13 @@ internal sealed class GuildWindow
         service.Changed += OnServiceChanged;
         service.Notice += OnNotice;
         ModEntry.Boost.Changed += OnServiceChanged; // The bonus line and Join buttons depend on it.
+        ModEntry.Fight.Changed += OnServiceChanged;
         _backdrop.TreeExiting += () =>
         {
             service.Changed -= OnServiceChanged;
             service.Notice -= OnNotice;
             ModEntry.Boost.Changed -= OnServiceChanged;
+            ModEntry.Fight.Changed -= OnServiceChanged;
         };
         Rebuild();
     }
@@ -248,10 +250,12 @@ internal sealed class GuildWindow
                 (update ? "Guilds now do more, so please read this again.\n\n" : "") +
                 "Guilds use a small online server run by the person who shared this mod.\n\n" +
                 "Enabling guilds sends your Steam ID and Steam name, the guilds you create or join, your guild " +
-                "chat messages, what you are training right now, all your skill levels, and your equipped gear. " +
-                "Guild mates can see these.\n\n" +
-                "It also turns on the party bonus: +5% skill XP while a guild mate is online doing the exact " +
-                "same action as you. XP earned that way stays on your character.\n\n" +
+                "chat messages, what you are training or fighting right now, all your skill levels, your equipped " +
+                "gear and, while you fight, your health, damage per second and combat level. Guild mates can see these.\n\n" +
+                "It also turns on the party bonus: +5% XP for each guild mate who is online doing the exact same " +
+                "action as you. In combat, guild mates fighting the same enemy also add part of their damage to " +
+                "your fight: 15% of it if your combat levels are within 10, otherwise 8%. The XP and loot " +
+                "you earn that way stay on your character.\n\n" +
                 "It does not send your save or anything about your account. You can delete your guild data at any time."));
             Button enable = update
                 ? Action("Accept and continue", "TexturedActionButtonGreen8x", _service.AcceptConsent)
@@ -508,7 +512,10 @@ internal sealed class GuildWindow
     {
         PartyBoost boost = ModEntry.Boost;
         if (!boost.Active) return;
-        Label line = Text("Party bonus active: +5% " + boost.SkillName + " XP, training with " + boost.PartnerName + ".");
+        string text = "Party bonus active: " + boost.PercentText + " " + boost.SkillName + " XP with " + boost.PartnerName + ".";
+        double dps = ModEntry.Fight.BonusDps;
+        if (dps > 0) text += " They add " + Math.Round(dps) + " damage per second to your fight.";
+        Label line = Text(text);
         line.Modulate = new Color(0.45f, 0.9f, 0.45f);
         _page.AddChild(line);
     }
@@ -534,11 +541,13 @@ internal sealed class GuildWindow
         Game? game = ModEntry.CurrentGame();
         JoinCheck check = game == null
             ? new JoinCheck(JoinState.Unknown, "Not available right now.")
-            : ActionJoiner.Check(game, member.ActionEntity, member.ActionTarget);
+            : ActionJoiner.Check(game, member.ActionEntity, member.ActionTarget, member.ActionArea);
 
         string entity = member.ActionEntity;
         string target = member.ActionTarget;
-        Button join = Action(label, check.State == JoinState.Already ? "TexturedActionButtonGreen8x" : "TexturedButton8x", () => Join(entity, target));
+        string area = member.ActionArea;
+        bool fight = entity == CombatAccess.EntityId;
+        Button join = Action(label, check.State == JoinState.Already ? "TexturedActionButtonGreen8x" : "TexturedButton8x", () => Join(entity, target, area));
         join.Icon = Icons.Skill(LocalId(member.ActionEntity));
         join.ExpandIcon = true;
         join.AddThemeConstantOverride("icon_max_width", 24);
@@ -548,14 +557,16 @@ internal sealed class GuildWindow
         join.Disabled = check.State != JoinState.Ready;
         join.TooltipText = check.State switch
         {
-            JoinState.Ready => "Click to do this too. While you are both on it, you each get +5% XP.",
-            JoinState.Already => "You are training this together.",
+            JoinState.Ready => fight
+                ? "Click to fight this too. While you both fight it you each get +5% XP and part of the other's damage."
+                : "Click to do this too. While you are both on it, you each get +5% XP.",
+            JoinState.Already => fight ? "You are fighting this together." : "You are training this together.",
             _ => check.Reason,
         };
         return join;
     }
 
-    private void Join(string entityId, string targetId)
+    private void Join(string entityId, string targetId, string areaId)
     {
         Game? game = ModEntry.CurrentGame();
         if (game == null)
@@ -563,7 +574,7 @@ internal sealed class GuildWindow
             OnNotice("Not available right now.");
             return;
         }
-        JoinCheck result = ActionJoiner.Join(game, entityId, targetId);
+        JoinCheck result = ActionJoiner.Join(game, entityId, targetId, areaId);
         OnNotice(result.State == JoinState.Ready ? "Joined. The party bonus starts within a few seconds." : result.Reason);
         Rebuild();
     }
@@ -647,28 +658,29 @@ internal sealed class GuildWindow
     /// <summary>One equipped item: the game's own item icon (with its tooltip) when available, plus the name.</summary>
     private static Control GearEntry(Game? game, ProfileGear piece)
     {
-        string name = LocalId(piece.Item);
-        Control icon = IconRect(Icons.Game("res://Assets/Items/" + name + ".png"), 28);
-
-        if (game != null && game.Data.TryGetObject<Item>(piece.Item, out Item? item) && item != null)
-        {
-            name = ((ILocalizedString)item.DisplayName).Text;
-            try
-            {
-                ItemInfoIcon native = UIServiceLocator.ItemInfoIconPool.GetNode();
-                native.SetItemQuantity(item, (int)Math.Clamp(piece.Quantity, 1, int.MaxValue));
-                native.SetLabelVisible(piece.Quantity > 1);
-                icon = native;
-            }
-            catch (Exception)
-            {
-                icon = IconRect(item.Icon, 28);
-            }
-        }
-
+        Control icon = GearIcon(game, piece, out string name);
         Label label = Text(name + (piece.Quantity > 1 ? "  x" + piece.Quantity : "") + "\n" + LocalId(piece.Slot));
         label.CustomMinimumSize = new Vector2(200, 0);
         return Row(icon, label);
+    }
+
+    /// <summary>The item picture with a name tooltip, also used by the Players tab on the combat screen.</summary>
+    internal static Control GearIcon(Game? game, ProfileGear piece, out string name)
+    {
+        name = LocalId(piece.Item);
+        Texture2D? texture = Icons.Game("res://Assets/Items/" + name + ".png");
+        if (game != null && game.Data.TryGetObject<Item>(piece.Item, out Item? item) && item != null)
+        {
+            name = ((ILocalizedString)item.DisplayName).Text;
+            texture = item.Icon;
+        }
+
+        // A plain picture, not the game's pooled item icon: that one is built for costs and rewards and shows
+        // "owned / needed" counts from the local player's bank, which is wrong for someone else's gear.
+        TextureRect icon = IconRect(texture, 32);
+        icon.MouseFilter = Control.MouseFilterEnum.Stop;
+        icon.TooltipText = name + (piece.Quantity > 1 ? "  x" + piece.Quantity : "") + "\n" + LocalId(piece.Slot);
+        return icon;
     }
 
     private static TextureRect SkillIcon(MemberInfo? member)

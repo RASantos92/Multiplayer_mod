@@ -150,6 +150,15 @@ internal static class UiProbe
         }
     }
 
+    /// <summary>A node and its children as text, for the other probes.</summary>
+    internal static string DumpNode(Node? node, int maxDepth, bool withProperties = true)
+    {
+        var sb = new StringBuilder();
+        s_nodeCount = 0;
+        Tree(sb, node, 0, maxDepth, withProperties);
+        return sb.ToString();
+    }
+
     private static string Describe(Node n)
     {
         string type = n.GetType().FullName ?? n.GetClass();

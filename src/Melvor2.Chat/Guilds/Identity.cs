@@ -19,7 +19,7 @@ internal sealed class Identity
     /// new, so players who agreed to an older notice are asked again before it takes effect.
     /// 2 = adds skill levels, equipped gear, current action ids and the party XP bonus.
     /// </summary>
-    public const int CurrentConsent = 2;
+    public const int CurrentConsent = 3;
 
     public string SteamId { get; }
     public string Key { get; }

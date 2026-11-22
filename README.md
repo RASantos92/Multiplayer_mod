@@ -47,18 +47,28 @@ Load your save, then click **Guild** in the top bar (next to Guide).
 
 Click a member's name in the **Members** tab to see their profile: what they are doing right now, all their skill levels, and their equipped gear. Click **< Back** to return.
 
-**Train together (+5% XP)**
+**Train together (+5% XP per player)**
 
 In the Members tab, what an online member is doing shows as a button.
 
 1. Click it. If your character meets the game's requirements, it starts the same action.
-2. While you and a guild mate are both online on the **exact same action** (same fishing spot, same tree, same ore, same recipe), you each get **+5% XP** in that skill.
+2. While you and a guild mate are both online on the **exact same action** (same fishing spot, same tree, same ore, same recipe, same enemy), you each get **+5% XP** in that skill. Every extra guild mate on it adds another 5%, up to four others (+20%).
 3. A green "Party bonus active" line appears in the Guild window, and the chat tells you when it starts and ends.
 
 - If you can't join, the button is greyed out and hovering it says why, for example "Requires Fishing level 73".
-- Joining by button works for Fishing, Woodcutting, Mining, Thieving, Cooking, Firemaking, Herblore and the smithing-style skills. For anything else, start the same action yourself and the bonus still applies. Combat does not get the bonus yet.
+- Joining by button works for Combat, Fishing, Woodcutting, Mining, Thieving, Cooking, Firemaking, Herblore and the smithing-style skills. For anything else, start the same action yourself and the bonus still applies.
 - The bonus adds to your other XP bonuses the same way the game's own bonuses do, and it only applies while you are both online. It never applies to offline progress.
 - It takes up to about 20 seconds to notice a partner, and ends at once when you stop.
+
+**Fight together**
+
+Click a guild mate's fight in the Members tab to fight the same enemy or dungeon. You each fight your own copy of the enemy, and the mod links the two fights:
+
+- **Their damage helps you.** Each guild mate on your enemy has their own attack bar. When it fills, they attack your enemy, and it hits or misses as often as their own attacks do. If your combat levels are within 10 of each other the hit is worth **15%** of their damage; otherwise **8%**.
+- **A Players tab** appears at the end of the tabs above your stats on the Combat page (friends icon; use the arrows if it is off the edge). It shows each player's health, damage per second, attack bar and gear.
+- **Each player has a colour.** Their name, their attack bar and the numbers their hits make on the enemy all use it.
+- **XP:** you only get combat XP for your own hits, plus the +5% per player bonus on your combat skills. Their hits just make kills, and so loot, faster.
+- It only works while you are both online and actually fighting: not while an enemy is spawning, while paused, or during offline progress. Health and damage shown for others can be a few seconds old.
 
 **Who can do what**
 
@@ -139,6 +149,8 @@ Uninstalling does not remove you from your guilds. To erase your guild data from
 | "Could not reach the guild server" | Check your internet connection and try again in a minute. Friends chat still works without the server. |
 | Cannot invite a friend to the guild | They need the mod installed and **Enable Guilds** clicked once. |
 | "This Steam account already enabled guilds on another PC" | Your guild key lives on the PC where you first enabled guilds. Ask the person who shared this mod to reset it. |
+| No Guild button, and the game log says "An Application Control policy has blocked this file" | Windows **Smart App Control** is blocking the mod because its files are not recognised. See "Smart App Control" below. |
+| The install window shows "Usage: Melvor2.Patcher" then "Patching failed" | Same cause: Smart App Control blocked the installer's helper program. |
 | The game will not start | Run the uninstall line, then verify the game files in Steam. |
 
 ---
@@ -149,9 +161,17 @@ Uninstalling does not remove you from your guilds. To erase your guild data from
 - **Friends chat is invite-only.** It uses a private Steam lobby that only people you invite can join.
 - **It does not touch your account.** The mod does not use the game's cloud login and does not read or send your save.
 - **Guilds are opt-in.** Nothing goes to the guild server until you click **Enable Guilds**.
-- **The party bonus is real XP.** It is a temporary bonus that is never written to your save, but the extra XP you earn with it stays on your character like any other XP.
+- **The party bonus is real XP, and shared fights give real loot.** The bonuses themselves are temporary and never written to your save, but the extra XP, kills and loot you earn with them stay on your character like any other.
 - **It is easy to undo.** The original game file is kept and the uninstall line puts it back.
 - **It is unofficial.** The game's developers do not support it, so use it at your own risk.
+
+### Smart App Control
+
+Some Windows 11 PCs have **Smart App Control** turned on (Windows Security > App & browser control). It blocks programs and DLLs that Windows does not recognise, and it can block this mod: the Guild button and chat icon never appear, or the installer fails with "Patching failed".
+
+Releases marked **signed** on the releases page are code-signed, which Smart App Control accepts. If you are on an unsigned release and are blocked, wait for a signed one. Turning Smart App Control off is your own decision: it lowers your PC's protection and Windows only lets you turn it back on by resetting Windows.
+
+One part cannot be signed: the installer changes one of the game's own files on your PC. Windows has accepted that file so far, but it could block it in future.
 
 ### What guilds send to the server
 
@@ -164,8 +184,9 @@ Once you click **Enable Guilds**, the mod sends:
 - your guild chat messages (deleted after 14 days)
 - what you are doing right now (the skill and the exact action), and when you were last online
 - all your skill levels and the gear you have equipped
+- while you are fighting: your health, damage per second, combat level, attack speed and chance to hit
 
-It never sends your save, your bank, or anything about your Steam or game account. Other members of your guilds can see your name, rank, online status, current action, skill levels and equipped gear.
+It never sends your save, your bank, or anything about your Steam or game account. Other members of your guilds can see your name, rank, online status, current action, skill levels, equipped gear and, while you fight, your health and damage.
 
 If you enabled guilds on an earlier version, the Guild window shows the updated notice once and waits for you to accept it before sending the new information.
 
@@ -209,6 +230,8 @@ Requires the .NET 10 SDK and the game installed through Steam.
 | `server/` | The guild API (Node on Vercel, MongoDB Atlas). See `server/README.md`. `server/scripts/fake-partner.mjs` is a throwaway guild member for testing profiles and the party bonus alone. |
 | `tools/install.ps1`, `tools/uninstall.ps1` | Build and install from source. |
 | `tools/package.ps1` | Builds `dist\Melvor2Chat.zip` for a release. |
+
+**Code signing.** Unsigned builds can be blocked by Windows Smart App Control. `tools/sign.ps1` signs with Azure Artifact Signing (formerly Trusted Signing) when `tools/signing.local.json` exists (copy `tools/signing.example.json`), using your `az login` and the `sign` dotnet tool. `package.ps1` and `install.ps1` call it and say clearly whether the result is signed. No key or password is stored in the repository.
 
 To publish a new version: run `tools\package.ps1`, then create a GitHub release and attach `dist\Melvor2Chat.zip` under exactly that file name. The install line always downloads the latest release.
 

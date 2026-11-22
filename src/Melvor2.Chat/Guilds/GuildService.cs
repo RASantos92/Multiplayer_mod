@@ -9,9 +9,13 @@ internal sealed record GuildInfo(string Id, string Name, string Description, str
 
 /// <summary>ActionEntity / ActionTarget are game ids; empty when the member is idle or on an older mod.</summary>
 internal sealed record MemberInfo(string Id, string Name, string Rank, long LastSeen, string Skill, long Level,
-    string ActionEntity, string ActionTarget, string ActionName)
+    string ActionEntity, string ActionTarget, string ActionName,
+    string ActionArea = "", long Hp = 0, long MaxHp = 0, long Dps = 0, long CombatLevel = 0, long IntervalMs = 0, long HitPercent = 0)
 {
     public bool HasAction => ActionEntity.Length > 0 && ActionTarget.Length > 0;
+
+    /// <summary>True when the member is in a fight and on a mod version that shares health and DPS.</summary>
+    public bool HasCombat => MaxHp > 0;
     public string ActionKey => ActionEntity + "|" + ActionTarget;
 }
 
@@ -39,6 +43,10 @@ internal sealed class GuildService
 {
     private const double FastSync = 3;
     private const double PartySync = 10;
+    private const double CombatSync = 5;
+
+    /// <summary>At most this many guild mates count towards a party.</summary>
+    public const int MaxPartners = 4;
     private const double SlowSync = 20;
     private const double ProfileUploadGap = 60;
     private const int MaxLinesPerGuild = 200;
@@ -69,8 +77,14 @@ internal sealed class GuildService
     /// <summary>Supplied by the mod: what the local character is doing right now, or null.</summary>
     public Func<ActivityInfo?>? Activity { get; set; }
 
+    /// <summary>Supplied by the mod: my health, DPS and combat level while fighting, otherwise null.</summary>
+    public Func<CombatInfo?>? Combat { get; set; }
+
     /// <summary>Set by the mod while a guild mate might be sharing my action, so presence stays fresh.</summary>
     public bool Party { get; set; }
+
+    /// <summary>Set by the mod while sharing a fight: health and DPS need to be fresher than skilling.</summary>
+    public bool CombatParty { get; set; }
 
     /// <summary>When the last successful sync finished (local clock, UTC).</summary>
     public DateTime LastSyncUtc { get; private set; }
@@ -133,25 +147,27 @@ internal sealed class GuildService
         if (!Enabled) return;
         _sinceSync += delta;
         _sinceProfileUpload += delta;
-        double interval = Active ? FastSync : Party ? PartySync : SlowSync;
+        double interval = Active ? FastSync : CombatParty ? CombatSync : Party ? PartySync : SlowSync;
         if (!_syncing && _sinceSync >= interval) Sync();
     }
 
-    /// <summary>The name of an online guild mate doing exactly this action, or null.</summary>
-    public string? FindPartner(string actionKey)
+    /// <summary>The online guild mates doing exactly this action (each once, at most MaxPartners).</summary>
+    public List<MemberInfo> FindParty(string actionKey)
     {
+        var party = new List<MemberInfo>();
         foreach (List<MemberInfo> members in Members.Values)
         {
             foreach (MemberInfo member in members)
             {
+                if (party.Count >= MaxPartners) return party;
                 if (member.Id != _steamId && member.HasAction && member.ActionKey == actionKey
-                    && ServerNow - member.LastSeen < OnlineWindowMs)
+                    && ServerNow - member.LastSeen < OnlineWindowMs && party.All(p => p.Id != member.Id))
                 {
-                    return member.Name;
+                    party.Add(member);
                 }
             }
         }
-        return null;
+        return party;
     }
 
     /// <summary>Sends my profile JSON if it changed, at most once a minute.</summary>
@@ -410,9 +426,11 @@ internal sealed class GuildService
         _sinceSync = 0;
 
         ActivityInfo? activity = null;
+        CombatInfo? combat = null;
         try
         {
             activity = Activity?.Invoke();
+            if (activity != null) combat = Combat?.Invoke();
         }
         catch (Exception e)
         {
@@ -430,8 +448,20 @@ internal sealed class GuildService
                 w.WriteStartObject("action");
                 w.WriteString("entity", activity.EntityId);
                 w.WriteString("target", activity.TargetId);
+                if (activity.AreaId.Length > 0) w.WriteString("area", activity.AreaId);
                 w.WriteString("name", activity.Name);
                 w.WriteEndObject();
+                if (combat != null)
+                {
+                    w.WriteStartObject("combat");
+                    w.WriteNumber("hp", Math.Min(combat.Hp, combat.MaxHp));
+                    w.WriteNumber("maxHp", combat.MaxHp);
+                    w.WriteNumber("dps", combat.Dps);
+                    w.WriteNumber("level", Math.Min(combat.Level, 100000));
+                    w.WriteNumber("interval", combat.IntervalMs);
+                    w.WriteNumber("hit", combat.HitPercent);
+                    w.WriteEndObject();
+                }
                 w.WriteEndObject();
             }
             else
@@ -463,9 +493,12 @@ internal sealed class GuildService
                 {
                     JsonElement? status = m.Child("status");
                     JsonElement? action = status?.Child("action");
+                    JsonElement? fight = status?.Child("combat");
                     return new MemberInfo(m.Str("id"), m.Str("name"), m.Str("rank"), m.Long("lastSeen"),
                         status?.Str("skill") ?? "", status?.Long("level") ?? 0,
-                        action?.Str("entity") ?? "", action?.Str("target") ?? "", action?.Str("name") ?? "");
+                        action?.Str("entity") ?? "", action?.Str("target") ?? "", action?.Str("name") ?? "",
+                        action?.Str("area") ?? "", fight?.Long("hp") ?? 0, fight?.Long("maxHp") ?? 0,
+                        fight?.Long("dps") ?? 0, fight?.Long("level") ?? 0, fight?.Long("interval") ?? 0, fight?.Long("hit") ?? 0);
                 }).ToList();
             }
             if (seen.Count != Guilds.Count) membershipChanged = true;
