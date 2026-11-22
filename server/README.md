@@ -49,15 +49,22 @@ If `/health?db=1` reports `database_unavailable`: check the password in `MONGODB
 
 If every path answers with the health JSON, or with 404, the rewrite in `vercel.json` is not passing the path through. This could not be tested before the first deploy; the smoke script will show it straight away.
 
-### Resetting a player who lost their key
+### Admin tool
 
-A player who reinstalls Windows or moves to a new PC loses their key file and sees "This Steam account already enabled guilds on another PC". With `ADMIN_KEY` set you can let them back in:
+With `ADMIN_KEY` set, `scripts/admin.mjs` lets you deal with problems. It asks for the admin key each time, or reads it from the `MELVOR2_ADMIN_KEY` environment variable.
 
 ```powershell
+node scripts/admin.mjs find "part of a name"
+node scripts/admin.mjs ban 7656119xxxxxxxxxx
+node scripts/admin.mjs unban 7656119xxxxxxxxxx
+node scripts/admin.mjs delete-guild "Guild name"
 node scripts/admin.mjs reset 7656119xxxxxxxxxx
 ```
 
-It asks for the admin key (or reads it from the `MELVOR2_ADMIN_KEY` environment variable). The player then clicks **Enable Guilds** again; their guilds and anything waiting on the marketplace are kept. Only do this for someone you are sure owns that Steam account, because whoever enables guilds with that Steam ID next gets the account.
+- **find** shows matching players with their Steam ID, their guilds and whether they are banned. Use it to get the Steam ID for the other commands. It also accepts a Steam ID.
+- **ban** locks that Steam account out of guilds. The player is removed from the guilds they are in, and their chat messages, marketplace listings, offers, requests and invites are removed. Guilds they own are left alone and listed so you can delete the ones that should go. Items they had listed wait for them and come back if you unban them. A ban does not stop the same person using a different Steam account.
+- **delete-guild** removes a guild the same way its owner disbanding it would: listed items go back to their sellers. It cannot be undone.
+- **reset** is for a player who reinstalled Windows or moved to a new PC and sees "This Steam account already enabled guilds on another PC". It forgets their old key; they click **Enable Guilds** again and keep their guilds and anything waiting on the marketplace. Only do this for someone you are sure owns that Steam account, because whoever enables guilds with that Steam ID next gets the account.
 
 For lower latency, set the function region near the Atlas cluster in the Vercel project under **Settings**, **Functions**.
 
@@ -104,7 +111,7 @@ Ids: a player id is the SteamID64 as a string. A guild id is a 24-character hex 
 
 ### Identity
 
-The server cannot verify Steam logins. On first use the mod generates a random key (32 to 128 characters from `A-Z a-z 0-9 _ - + / =`), stores it locally and registers it. The server keeps only the SHA-256 hash. The first key registered for a Steam ID wins. If the key is lost, the server owner can reset it (see "Resetting a player who lost their key").
+The server cannot verify Steam logins. On first use the mod generates a random key (32 to 128 characters from `A-Z a-z 0-9 _ - + / =`), stores it locally and registers it. The server keeps only the SHA-256 hash. The first key registered for a Steam ID wins. If the key is lost, the server owner can reset it (see "Admin tool").
 
 Because Steam logins cannot be verified, anyone who can register can also talk to the API with their own program instead of the game, and nothing a client reports about its own bank, damage or levels can be checked. Set `REGISTER_CODE` to limit registration to people you gave the code to.
 
@@ -119,6 +126,9 @@ Requests with a missing or wrong key are counted per IP address; after 30 in a m
 | `GET /health` | | `{ok, service, protocol}`. Add `?db=1` to also ping the database. No headers needed. |
 | `POST /register` | `{steamId, name, key, code?}` | `201 {player: {id, name}, created: true}` for a new Steam ID. `200` with `created: false` if the same key is presented again (also updates the name), or when it sets a new key after an admin reset. `409 steam_id_claimed` for a different key. When the server has `REGISTER_CODE` set, a new Steam ID must send a matching `code`: `403 code_required` or `403 code_wrong` otherwise. |
 | `POST /admin/reset-player` | `{steamId}` | Needs the `X-Admin-Key` header (the server's `ADMIN_KEY`); `404` when no `ADMIN_KEY` is set. Forgets the player's key so their next register sets a new one. |
+| `POST /admin/ban`, `POST /admin/unban` | `{steamId}` | Same header. A banned player gets `403 banned` on every call, including `/register` and `/sync`. Banning also removes their memberships (except in guilds they own), messages, listings, offers, requests and invites; the reply lists `ownedGuilds`. |
+| `POST /admin/delete-guild` | `{name}` or `{id}` | Same header. Disbands the guild. |
+| `POST /admin/find-player` | `{q}` | Same header. `q` is 2 to 32 characters of a name, or a Steam ID. `{players: [{id, name, banned, lastSeen, guilds: [{id, name, rank}]}]}`, up to 20. |
 | `GET /me` | | `{player, guilds: [{id, name, description, ownerId, createdAt, rank}], invites: [{guildId, guildName, by, byName, at}], requests: [{guildId, guildName, at}], limits: {maxGuilds, maxMembers}}` |
 | `PUT /me/profile` | `{skills: [{id, level}], gear: [{slot, item, qty}]}` | `{ok: true, updatedAt}`. Replaces my whole profile. See Profiles below. |
 | `GET /players/:id/profile` | | `{player: {id, name}, profile: {skills, gear, updatedAt} or null, status, lastSeen}`. Only for myself or a player I share a guild with; otherwise `403 forbidden`. Unknown player: `404 player_not_found`. |
