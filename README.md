@@ -30,7 +30,7 @@ That's it. You only need to do this again after the game updates (see below).
 
 Load your save, then click **Guild** in the top bar (next to Guide).
 
-**First time:** read the short notice and click **Enable Guilds**. Nothing is sent anywhere until you do.
+**First time:** read the short notice, type the **tester code** you were given into the box under it, and click **Enable Guilds**. Nothing is sent anywhere until you do. You only need the code once.
 
 **Join a guild**
 
@@ -169,7 +169,8 @@ Uninstalling does not remove you from your guilds. To erase your guild data from
 | No party bonus | You both need the latest version, both online, on the exact same action. Give it 20 seconds. |
 | "Could not reach the guild server" | Check your internet connection and try again in a minute. Friends chat still works without the server. |
 | Cannot invite a friend to the guild | They need the mod installed and **Enable Guilds** clicked once. |
-| "This Steam account already enabled guilds on another PC" | Your guild key lives on the PC where you first enabled guilds. Ask the person who shared this mod to reset it. |
+| "This Steam account already enabled guilds on another PC" | Your guild key lives on the PC where you first enabled guilds. Ask the person who shared this mod to reset your guild account, then click **Enable Guilds** again. You keep your guilds. |
+| "This server is in closed testing" or "That tester code is not right" | Type the tester code from the person who shared this mod into the box above **Enable Guilds**. |
 | No Guild button, and the game log says "An Application Control policy has blocked this file" | Windows **Smart App Control** is blocking the mod because its files are not recognised. See "Smart App Control" below. |
 | The install window shows "Usage: Melvor2.Patcher" then "Patching failed" | Same cause: Smart App Control blocked the installer's helper program. |
 | The game will not start | Run the uninstall line, then verify the game files in Steam. |

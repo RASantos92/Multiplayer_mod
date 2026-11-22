@@ -90,7 +90,7 @@ if (!guildName) {
 
 auth = { steamId: '7656120' + String(randomInt(1_000_000_000, 2_000_000_000)), key: randomBytes(36).toString('base64') };
 await writeFile(stateFile, JSON.stringify(auth));
-const reg = await call('POST', '/register', { steamId: auth.steamId, name: 'Test Trader', key: auth.key });
+const reg = await call('POST', '/register', { steamId: auth.steamId, name: 'Test Trader', key: auth.key, code: process.env.MELVOR2_TESTER_CODE });
 if (!reg.ok) { console.error('Register failed:', reg.json); process.exit(1); }
 process.on('SIGINT', async () => { await cleanup('Ctrl+C'); process.exit(0); });
 

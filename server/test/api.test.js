@@ -10,8 +10,8 @@ import { createStore } from '../src/store.js';
 let mongod, client, db, store;
 let fetchApi; // default limits, except a roomy register limit (all tests share one "IP")
 
-function makeFetch(limits) {
-  const app = createApp({ store, limits });
+function makeFetch(limits, config) {
+  const app = createApp({ store, limits, config });
   return createFetchHandler(async () => ({ handle: app.handle, ping: store.ping }));
 }
 
@@ -212,13 +212,21 @@ test('join request: created, visible to staff only, accepted by officer', async 
   assert.deepEqual(r1.body, { joined: false, requested: true });
   assert.equal((await call(joiner, 'POST', `/guilds/${guild.id}/join`)).status, 200); // idempotent
 
-  // Outsider sees the member list without presence, and their own pending state.
+  // An outsider sees the guild and their own pending state, but not who is in it.
   const outside = await ok(joiner, 'GET', `/guilds/${guild.id}`);
   assert.equal(outside.guild.myRank, null);
   assert.equal(outside.guild.myPending, 'request');
   assert.equal(outside.requests, undefined);
-  assert.equal(outside.members.length, 3);
-  assert.ok(outside.members.every((m) => !('lastSeen' in m) && !('status' in m)));
+  assert.deepEqual(outside.members, []);
+  assert.equal(outside.guild.memberCount, 3);
+  assert.equal(outside.guild.ownerId, undefined);
+  assert.ok(!JSON.stringify(outside).includes(owner.id));
+  const inside = await ok(member, 'GET', `/guilds/${guild.id}`);
+  assert.equal(inside.members.length, 3);
+  assert.equal(inside.guild.ownerId, owner.id);
+  const found = (await ok(joiner, 'GET', '/guilds/search?q=' + encodeURIComponent(guild.name))).guilds;
+  assert.equal(found.length, 1);
+  assert.equal(found[0].ownerId, undefined);
   assert.deepEqual((await ok(joiner, 'GET', '/me')).requests.map((r) => r.guildId), [guild.id]);
 
   // Plain members do not see or answer requests.
@@ -941,4 +949,67 @@ test('delete my data also removes the profile and action', async () => {
   await ok(null, 'POST', '/register', { steamId: again.id, name: 'Back', key: again.key });
   const fresh = await ok(again, 'GET', `/players/${again.id}/profile`);
   assert.deepEqual([fresh.profile, fresh.status], [null, null]);
+});
+
+test('tester code: new players need it, known players do not', async () => {
+  const closed = makeFetch({ rate: { register: [10_000, 3_600_000] } }, { registerCode: 'Oak-Logs-42, second' });
+  const opts = { fetcher: closed };
+  const p = { id: newSteamId(), key: newKey() };
+  const reg = (extra) => ({ steamId: p.id, name: 'Tester', key: p.key, ...extra });
+
+  await fails(403, 'code_required', null, 'POST', '/register', reg(), opts);
+  await fails(403, 'code_required', null, 'POST', '/register', reg({ code: '  ' }), opts);
+  await fails(403, 'code_wrong', null, 'POST', '/register', reg({ code: 'oak-logs-43' }), opts);
+  await fails(403, 'code_wrong', null, 'POST', '/register', reg({ code: 'Oak-Logs-42, second' }), opts);
+  await fails(401, 'unauthorized', p, 'GET', '/me', undefined, opts);
+
+  assert.equal((await call(null, 'POST', '/register', reg({ code: ' OAK-logs-42 ' }), opts)).status, 201);
+  // Signing in again later needs no code, and neither does a second code stop working.
+  assert.equal((await call(null, 'POST', '/register', reg(), opts)).status, 200);
+  const q = { id: newSteamId(), key: newKey() };
+  assert.equal((await call(null, 'POST', '/register', { steamId: q.id, name: 'Q', key: q.key, code: 'second' }, opts)).status, 201);
+  await ok(p, 'GET', '/me', undefined, opts);
+});
+
+test('admin reset: off without a key, needs the key, lets the player set a new one and keeps their guilds', async () => {
+  const owner = await newPlayer('Owner');
+  const guild = await newGuild(owner);
+  await fails(404, 'not_found', null, 'POST', '/admin/reset-player', { steamId: owner.id });
+
+  const admin = makeFetch({ rate: { register: [10_000, 3_600_000] } }, { adminKey: 'admin-secret-for-tests', registerCode: 'code' });
+  const opts = (key) => ({ fetcher: admin, headers: key ? { 'x-admin-key': key } : {} });
+  await fails(401, 'unauthorized', null, 'POST', '/admin/reset-player', { steamId: owner.id }, opts());
+  await fails(401, 'unauthorized', null, 'POST', '/admin/reset-player', { steamId: owner.id }, opts('wrong'));
+  await fails(404, 'player_not_found', null, 'POST', '/admin/reset-player', { steamId: newSteamId() }, opts('admin-secret-for-tests'));
+  await ok(owner, 'GET', '/me', undefined, { fetcher: admin });
+
+  const done = await ok(null, 'POST', '/admin/reset-player', { steamId: owner.id }, opts('admin-secret-for-tests'));
+  assert.equal(done.player.id, owner.id);
+  await fails(401, 'unauthorized', owner, 'GET', '/me', undefined, { fetcher: admin });
+  await fails(401, 'unauthorized', owner, 'POST', '/sync', {}, { fetcher: admin });
+
+  // The next register sets the new key, with no tester code needed; after that the id is taken again.
+  const fresh = { id: owner.id, key: newKey() };
+  assert.equal((await call(null, 'POST', '/register', { steamId: fresh.id, name: 'Owner', key: fresh.key }, { fetcher: admin })).status, 200);
+  await fails(409, 'steam_id_claimed', null, 'POST', '/register', { steamId: owner.id, name: 'Thief', key: newKey() }, { fetcher: admin });
+  await fails(401, 'unauthorized', owner, 'GET', '/me', undefined, { fetcher: admin });
+  const me = await ok(fresh, 'GET', '/me', undefined, { fetcher: admin });
+  assert.deepEqual(me.guilds.map((g) => [g.id, g.rank]), [[guild.id, 'owner']]);
+});
+
+test('an address that keeps sending a wrong key is cut off for a minute', async () => {
+  let clock = Date.now();
+  const app = createApp({ store, now: () => clock, limits: { rate: { authFail: [3, 60_000], register: [10_000, 3_600_000] } } });
+  const limited = createFetchHandler(async () => ({ handle: app.handle, ping: store.ping }));
+  const from = (ip) => ({ fetcher: limited, headers: { 'x-forwarded-for': ip } });
+  const good = { id: newSteamId(), key: newKey() };
+  await ok(null, 'POST', '/register', { steamId: good.id, name: 'Good', key: good.key }, from('10.0.0.2'));
+  const bad = { id: good.id, key: newKey() };
+
+  for (let i = 0; i < 3; i++) await fails(401, 'unauthorized', bad, i % 2 ? 'GET' : 'POST', i % 2 ? '/me' : '/sync', i % 2 ? undefined : {}, from('10.0.0.1'));
+  await fails(429, 'rate_limited', bad, 'GET', '/me', undefined, from('10.0.0.1'));
+  await fails(429, 'rate_limited', good, 'GET', '/me', undefined, from('10.0.0.1')); // the address, not the player
+  await ok(good, 'GET', '/me', undefined, from('10.0.0.2'));
+  clock += 61_000;
+  await ok(good, 'GET', '/me', undefined, from('10.0.0.1'));
 });

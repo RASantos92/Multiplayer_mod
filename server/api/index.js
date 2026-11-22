@@ -6,7 +6,7 @@ import { createFetchHandler } from '../src/http.js';
 
 const handler = createFetchHandler(async () => {
   const store = await getStore(); // cached per warm instance
-  return { handle: createApp({ store }).handle, ping: store.ping };
+  return { handle: createApp({ store, config: { registerCode: process.env.REGISTER_CODE, adminKey: process.env.ADMIN_KEY } }).handle, ping: store.ping };
 });
 
 export default { fetch: handler };
