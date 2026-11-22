@@ -1013,3 +1013,43 @@ test('an address that keeps sending a wrong key is cut off for a minute', async 
   clock += 61_000;
   await ok(good, 'GET', '/me', undefined, from('10.0.0.1'));
 });
+
+test('admin ban: locks the player out, removes what others see of them, and can be undone', async () => {
+  const fetcher = makeFetch({ rate: { register: [10_000, 3_600_000], authFail: [10_000, 60_000] } }, { adminKey: 'admin-secret-for-tests' });
+  const adm = { fetcher, headers: { 'x-admin-key': 'admin-secret-for-tests' } };
+  const f = { fetcher };
+  const { owner, member, guild } = await trio();
+  const own = await newGuild(member); // the troublemaker also owns a guild
+  await ok(member, 'POST', `/guilds/${guild.id}/messages`, { body: 'rude words' }, f);
+  const { listing } = await ok(member, 'POST', `/guilds/${guild.id}/market`, { item: 'MelvorBase:OakLogs', qty: 5, price: 10, value: 10 }, f);
+
+  await fails(401, 'unauthorized', null, 'POST', '/admin/ban', { steamId: member.id }, f);
+  const found = await ok(null, 'POST', '/admin/find-player', { q: 'memb' }, adm);
+  assert.ok(found.players.some((p) => p.id === member.id && !p.banned && p.guilds.some((g) => g.id === guild.id)));
+  assert.deepEqual((await ok(null, 'POST', '/admin/find-player', { q: member.id }, adm)).players.map((p) => p.id), [member.id]);
+
+  const done = await ok(null, 'POST', '/admin/ban', { steamId: member.id }, adm);
+  assert.deepEqual(done.ownedGuilds.map((g) => g.id), [own.id]);
+  await fails(403, 'banned', member, 'GET', '/me', undefined, f);
+  await fails(403, 'banned', member, 'POST', '/sync', {}, f);
+  await fails(403, 'banned', null, 'POST', '/register', { steamId: member.id, name: 'Member', key: member.key }, f);
+  await fails(403, 'banned', null, 'POST', '/register', { steamId: member.id, name: 'Member', key: newKey() }, f);
+
+  const view = await ok(owner, 'GET', `/guilds/${guild.id}`, undefined, f);
+  assert.ok(!view.members.some((m) => m.id === member.id));
+  assert.deepEqual((await ok(owner, 'GET', `/guilds/${guild.id}/messages`, undefined, f)).messages.filter((x) => x.playerId === member.id), []);
+  assert.ok(!(await ok(owner, 'GET', `/guilds/${guild.id}/market`, undefined, f)).listings.some((l) => l.id === listing.id));
+  assert.equal((await ok(null, 'POST', '/admin/find-player', { q: member.id }, adm)).players[0].banned, true);
+
+  // Their own guild is still there until it is deleted, by name in any capitalisation.
+  await fails(404, 'guild_not_found', null, 'POST', '/admin/delete-guild', { name: 'No such guild at all' }, adm);
+  const gone = await ok(null, 'POST', '/admin/delete-guild', { name: own.name.toUpperCase() }, adm);
+  assert.equal(gone.guild.id, own.id);
+  await fails(404, 'guild_not_found', owner, 'GET', `/guilds/${own.id}`, undefined, f);
+
+  await ok(null, 'POST', '/admin/unban', { steamId: member.id }, adm);
+  const me = await ok(member, 'GET', '/me', undefined, f);
+  assert.deepEqual(me.guilds, []);
+  // The items from the closed listing are waiting for them.
+  assert.deepEqual((await ok(member, 'POST', '/sync', {}, f)).claims.map((c) => [c.kind, c.qty]), [['return', 5]]);
+});

@@ -81,7 +81,10 @@ export function createStore(db) {
     setPlayerName: (id, name) => players.updateOne({ _id: id }, { $set: { name } }),
     /** Authenticates and updates in one round trip. Returns the updated player or null. */
     touchPlayer: (id, keyHash, set) =>
-      players.findOneAndUpdate({ _id: id, keyHash }, { $set: set }, { returnDocument: 'after' }),
+      players.findOneAndUpdate({ _id: id, keyHash, banned: { $ne: true } }, { $set: set }, { returnDocument: 'after' }),
+    setBanned: (id, banned) => players.updateOne({ _id: id }, banned ? { $set: { banned: true, status: null } } : { $unset: { banned: '' } }),
+    findPlayersByName: (q, limit) =>
+      players.find({ name: { $regex: escapeRegex(q), $options: 'i' } }).sort({ lastSeen: -1 }).limit(limit).toArray(),
     deletePlayer: (id) => players.deleteOne({ _id: id }),
     /** Admin: forget the player's key so their next register can set a new one. */
     resetPlayerKey: (id) => players.updateOne({ _id: id }, { $set: { keyHash: null } }),
@@ -102,6 +105,7 @@ export function createStore(db) {
     /** Returns the new id, or false when the name is taken. */
     insertGuild: (doc) => tryInsert(guilds, doc),
     getGuild: (id) => guilds.findOne({ _id: id }),
+    getGuildByName: (nameLower) => guilds.findOne({ nameLower }),
     /** Returns 'ok', 'dup' (name taken) or 'missing'. */
     async updateGuild(id, set) {
       try {

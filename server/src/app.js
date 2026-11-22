@@ -22,7 +22,7 @@ export const DEFAULT_LIMITS = {
   rate: {
     register: [30, 60 * 60_000], // per IP
     authFail: [30, 60_000], // per IP, requests with a missing or wrong key (counted in memory)
-    admin: [20, 60 * 60_000], // per IP
+    admin: [120, 60 * 60_000], // per IP
     write: [60, 60_000], // per player, every non-GET except /sync
     message: [10, 10_000], // per player, on top of `write`
     sync: [60, 60_000], // per player
@@ -343,6 +343,22 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
     return { target, member, rank: rankOf(ctx.guild, member) };
   }
 
+  async function adminAuth({ headers, ip }) {
+    if (!adminKeyHash) throw notFound('not_found', 'No such endpoint');
+    await rate(ip, 'admin');
+    if (!sameHash(sha256(String(headers['x-admin-key'] ?? '')), adminKeyHash)) {
+      throw new HttpError(401, 'unauthorized', 'Wrong admin key');
+    }
+  }
+  async function adminPlayer(ctx) {
+    await adminAuth(ctx);
+    const steamId = vSteamId(ctx.body.steamId);
+    const player = await store.getPlayer(steamId);
+    if (!player) throw notFound('player_not_found', 'No such player');
+    return { steamId, player };
+  }
+  const banned = () => new HttpError(403, 'banned', 'This account has been banned from this guild server.');
+
   const market = createMarket({ store, now, guildCtx, requireRank, limits: limits.market });
 
   // ----- handlers: (ctx) => body | reply(status, body) -----
@@ -365,6 +381,7 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       }
       // An admin reset this player's key (they lost their key file): the next register sets a new one.
       if (existing && existing.keyHash === null && (await store.claimPlayer(steamId, keyHash, name))) return out(false);
+      if (existing?.banned) throw banned();
       if (!existing || !sameHash(existing.keyHash, keyHash)) {
         throw conflict('steam_id_claimed', 'This Steam ID is already registered with a different key');
       }
@@ -430,7 +447,10 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       if (body.status !== undefined) set.status = vStatus(body.status, t);
       if (body.name !== undefined) set.name = vPlayerName(body.name);
 
-      if (!(await store.touchPlayer(me, keyHash, set))) throw unknownCaller();
+      if (!(await store.touchPlayer(me, keyHash, set))) {
+        const who = await store.getPlayer(me);
+        throw who?.banned && sameHash(who.keyHash, keyHash) ? banned() : unknownCaller();
+      }
       const [, memberships] = await Promise.all([rate(me, 'sync'), store.membershipsOf(me)]);
       const gids = memberships.map((m) => m.guild._id);
 
@@ -500,19 +520,63 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       return reply(201, { guild: guildOut({ ...doc, _id: gid }, { rank: 'owner', memberCount: 1 }) });
     },
 
+    // ----- admin (server owner only; off unless ADMIN_KEY is set) -----
+
     // Lets a player who lost their key file enable guilds again: their next register sets a new key.
     // Guild memberships and anything waiting on the marketplace are kept.
-    async adminResetPlayer({ body, headers, ip }) {
-      if (!adminKeyHash) throw notFound('not_found', 'No such endpoint');
-      await rate(ip, 'admin');
-      if (!sameHash(sha256(String(headers['x-admin-key'] ?? '')), adminKeyHash)) {
-        throw new HttpError(401, 'unauthorized', 'Wrong admin key');
-      }
-      const steamId = vSteamId(body.steamId);
-      const player = await store.getPlayer(steamId);
-      if (!player) throw notFound('player_not_found', 'No such player');
+    async adminResetPlayer(ctx) {
+      const { steamId, player } = await adminPlayer(ctx);
       await store.resetPlayerKey(steamId);
       return { ok: true, player: { id: steamId, name: player.name } };
+    },
+
+    // Locks a player out and removes what others can see of them: guild memberships, chat messages,
+    // marketplace listings and offers, requests and invites. Guilds they own are left for delete-guild.
+    async adminBan(ctx) {
+      const { steamId, player } = await adminPlayer(ctx);
+      await store.setBanned(steamId, true);
+      await market.closeListings({ sellerId: steamId }, 'cancelled');
+      const owned = (await store.membershipsOf(steamId)).filter((m) => m.guild.ownerId === steamId).map((m) => m.guild);
+      await store.purgePlayerChildren(steamId);
+      // Keep them on the roster of guilds they own, so those guilds stay consistent until they are dealt with.
+      for (const g of owned) await store.insertMember({ guildId: g._id, playerId: steamId, rank: 'owner', joinedAt: new Date(now()) });
+      return { ok: true, player: { id: steamId, name: player.name }, ownedGuilds: owned.map((g) => ({ id: String(g._id), name: g.name })) };
+    },
+
+    async adminUnban(ctx) {
+      const { steamId, player } = await adminPlayer(ctx);
+      await store.setBanned(steamId, false);
+      return { ok: true, player: { id: steamId, name: player.name } };
+    },
+
+    // Removes a guild by exact name (any capitalisation) or id, the same way its owner disbanding it would:
+    // listed items go back to their sellers.
+    async adminDeleteGuild(ctx) {
+      await adminAuth(ctx);
+      const { name, id } = ctx.body;
+      const guild = typeof id === 'string' ? await store.getGuild(vGuildId(id))
+        : typeof name === 'string' ? await store.getGuildByName(name.trim().toLowerCase())
+        : null;
+      if (!guild) throw notFound('guild_not_found', 'Guild not found');
+      await market.closeListings({ guildId: guild._id }, 'guild_disbanded');
+      await store.purgeGuildChildren(guild._id);
+      await store.deleteGuild(guild._id);
+      await store.purgeGuildChildren(guild._id, { withMessages: false });
+      return { ok: true, guild: { id: String(guild._id), name: guild.name, ownerId: guild.ownerId } };
+    },
+
+    // Finds players by part of their name, or one player by Steam ID, with the guilds they are in.
+    async adminFindPlayer(ctx) {
+      await adminAuth(ctx);
+      const q = typeof ctx.body.q === 'string' ? ctx.body.q.trim() : '';
+      if (len(q) < 2 || len(q) > 32) throw bad('invalid_query', 'q must be 2 to 32 characters');
+      const found = /^\d{17}$/.test(q) ? [await store.getPlayer(q)].filter(Boolean) : await store.findPlayersByName(q, 20);
+      const players = [];
+      for (const p of found) {
+        const guilds = (await store.membershipsOf(p._id)).map(({ member, guild }) => ({ id: String(guild._id), name: guild.name, rank: rankOf(guild, member) }));
+        players.push({ id: p._id, name: p.name, banned: p.banned === true, lastSeen: ms(p.lastSeen), guilds });
+      }
+      return { players };
     },
 
     async searchGuilds({ query }) {
@@ -731,7 +795,12 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
   const routes = [
     ['POST', 'register', h.register, { auth: false }],
     ['POST', 'sync', h.sync, { auth: false }], // does its own auth + rate limit
-    ['POST', 'admin/reset-player', h.adminResetPlayer, { auth: false }], // checks X-Admin-Key itself
+    // These check X-Admin-Key themselves.
+    ['POST', 'admin/reset-player', h.adminResetPlayer, { auth: false }],
+    ['POST', 'admin/ban', h.adminBan, { auth: false }],
+    ['POST', 'admin/unban', h.adminUnban, { auth: false }],
+    ['POST', 'admin/delete-guild', h.adminDeleteGuild, { auth: false }],
+    ['POST', 'admin/find-player', h.adminFindPlayer, { auth: false }],
     ['GET', 'me', h.me],
     ['DELETE', 'me', h.deleteMe],
     ['PUT', 'me/profile', h.putProfile],
@@ -798,6 +867,7 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
         const { steamId, keyHash } = parseAuth(headers);
         const player = await store.getPlayer(steamId);
         if (!player || !sameHash(player.keyHash, keyHash)) throw unknownCaller();
+        if (player.banned) throw banned();
         ctx.me = steamId;
         ctx.player = player;
         await rate(steamId, req.method === 'GET' ? 'read' : 'write');
