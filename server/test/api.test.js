@@ -1,0 +1,685 @@
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
+import { MongoClient } from 'mongodb';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import { createApp } from '../src/app.js';
+import { createFetchHandler } from '../src/http.js';
+import { createStore } from '../src/store.js';
+
+let mongod, client, db, store;
+let fetchApi; // default limits, except a roomy register limit (all tests share one "IP")
+
+function makeFetch(limits) {
+  const app = createApp({ store, limits });
+  return createFetchHandler(async () => ({ handle: app.handle, ping: store.ping }));
+}
+
+before(async () => {
+  mongod = await MongoMemoryServer.create();
+  client = new MongoClient(mongod.getUri());
+  await client.connect();
+  db = client.db('guildtest');
+  store = createStore(db);
+  await store.init();
+  fetchApi = makeFetch({ rate: { register: [10_000, 3_600_000] } });
+});
+
+after(async () => {
+  await client?.close();
+  await mongod?.stop();
+});
+
+// ---------- helpers ----------
+
+let counter = 0;
+// Valid SteamID64 format, in a range Steam has not handed out.
+const newSteamId = () => `765612021${String(++counter).padStart(8, '0')}`;
+const newKey = () => randomBytes(24).toString('hex');
+const uniq = (prefix) => `${prefix} ${randomBytes(4).toString('hex')}`;
+
+async function call(player, method, path, body, { fetcher = fetchApi, headers = {} } = {}) {
+  const h = { 'x-mod-protocol': '1', ...headers };
+  if (player) h.authorization = `Bearer ${player.id}:${player.key}`;
+  const init = { method, headers: h };
+  if (body !== undefined) {
+    init.body = typeof body === 'string' ? body : JSON.stringify(body);
+    h['content-type'] = 'application/json';
+  }
+  const res = await fetcher(new Request(`https://guilds.test${path}`, init));
+  return { status: res.status, body: await res.json() };
+}
+
+async function ok(player, method, path, body, opts) {
+  const r = await call(player, method, path, body, opts);
+  assert.ok(r.status === 200 || r.status === 201, `${method} ${path} -> ${r.status} ${JSON.stringify(r.body)}`);
+  return r.body;
+}
+
+async function fails(status, code, player, method, path, body, opts) {
+  const r = await call(player, method, path, body, opts);
+  assert.equal(r.status, status, `${method} ${path} -> ${r.status} ${JSON.stringify(r.body)}`);
+  assert.equal(r.body.error.code, code);
+  assert.equal(typeof r.body.error.message, 'string');
+  return r.body;
+}
+
+async function newPlayer(name = 'Player') {
+  const p = { id: newSteamId(), key: newKey(), name };
+  await ok(null, 'POST', '/register', { steamId: p.id, name, key: p.key });
+  return p;
+}
+
+async function newGuild(owner, description = '') {
+  const { guild } = await ok(owner, 'POST', '/guilds', { name: uniq('Guild'), description });
+  return guild;
+}
+
+/** Adds `player` to the guild through join request + accept. */
+async function addTo(guild, owner, player) {
+  await ok(player, 'POST', `/guilds/${guild.id}/join`);
+  await ok(owner, 'POST', `/guilds/${guild.id}/requests/${player.id}`, { accept: true });
+}
+
+/** owner + officer + member in a fresh guild. */
+async function trio() {
+  const [owner, officer, member] = [await newPlayer('Owner'), await newPlayer('Officer'), await newPlayer('Member')];
+  const guild = await newGuild(owner);
+  await addTo(guild, owner, officer);
+  await addTo(guild, owner, member);
+  await ok(owner, 'POST', `/guilds/${guild.id}/members/${officer.id}/rank`, { rank: 'officer' });
+  return { owner, officer, member, guild };
+}
+
+const ranks = async (viewer, guild) =>
+  Object.fromEntries((await ok(viewer, 'GET', `/guilds/${guild.id}`)).members.map((m) => [m.id, m.rank]));
+
+// ---------- tests ----------
+
+test('health works without auth or protocol header', async () => {
+  const res = await fetchApi(new Request('https://guilds.test/health?db=1'));
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, service: 'melvor2-guild-api', protocol: 1, db: true });
+});
+
+test('routing accepts the rewritten /api?__path= form and an /api prefix', async () => {
+  const p = await newPlayer();
+  const a = await ok(p, 'GET', '/api?__path=me');
+  const b = await ok(p, 'GET', '/api/me');
+  assert.equal(a.player.id, p.id);
+  assert.equal(b.player.id, p.id);
+  const s = await ok(p, 'GET', '/api?__path=guilds/search&q=zzzzzz');
+  assert.deepEqual(s.guilds, []);
+});
+
+test('protocol header is required', async () => {
+  const p = await newPlayer();
+  for (const v of [undefined, '0', 'abc']) {
+    const headers = { 'x-mod-protocol': v };
+    if (v === undefined) delete headers['x-mod-protocol'];
+    const req = new Request('https://guilds.test/me', {
+      headers: { authorization: `Bearer ${p.id}:${p.key}`, ...headers },
+    });
+    const res = await fetchApi(req);
+    assert.equal(res.status, 426);
+    assert.equal((await res.json()).error.code, 'upgrade_required');
+  }
+  await ok(p, 'GET', '/me', undefined, { headers: { 'x-mod-protocol': '2' } }); // newer clients are fine
+});
+
+test('register: first claim wins, same key is idempotent, other key is refused', async () => {
+  const id = newSteamId();
+  const key = newKey();
+  const first = await call(null, 'POST', '/register', { steamId: id, name: 'Alice', key });
+  assert.equal(first.status, 201);
+  assert.equal(first.body.created, true);
+
+  const again = await call(null, 'POST', '/register', { steamId: id, name: 'Alice Renamed', key });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.created, false);
+  assert.equal((await ok({ id, key }, 'GET', '/me')).player.name, 'Alice Renamed');
+
+  await fails(409, 'steam_id_claimed', null, 'POST', '/register', { steamId: id, name: 'Mallory', key: newKey() });
+  await fails(401, 'unauthorized', { id, key: newKey() }, 'GET', '/me');
+  await fails(401, 'unauthorized', { id: newSteamId(), key }, 'GET', '/me');
+  await fails(401, 'unauthorized', null, 'GET', '/me');
+
+  // Only the hash is stored.
+  const doc = await db.collection('players').findOne({ _id: id });
+  assert.match(doc.keyHash, /^[0-9a-f]{64}$/);
+  assert.ok(!JSON.stringify(doc).includes(key));
+});
+
+test('register: input validation', async () => {
+  const good = { steamId: newSteamId(), name: 'X', key: newKey() };
+  await fails(400, 'invalid_steam_id', null, 'POST', '/register', { ...good, steamId: '123' });
+  await fails(400, 'invalid_steam_id', null, 'POST', '/register', { ...good, steamId: '99999999999999999' });
+  await fails(400, 'invalid_steam_id', null, 'POST', '/register', { ...good, steamId: 76561202100000001 });
+  await fails(400, 'invalid_key', null, 'POST', '/register', { ...good, key: 'short' });
+  await fails(400, 'invalid_name', null, 'POST', '/register', { ...good, name: 'x'.repeat(33) });
+  await fails(400, 'invalid_name', null, 'POST', '/register', { ...good, name: '\u0001\u0002' });
+  await fails(400, 'invalid_json', null, 'POST', '/register', '{nope');
+  await fails(400, 'invalid_json', null, 'POST', '/register', '[1]');
+  await ok(null, 'POST', '/register', { ...good, name: 'x'.repeat(32) });
+});
+
+test('request bodies over 4 KB are refused', async () => {
+  const p = await newPlayer();
+  await fails(413, 'body_too_large', p, 'POST', '/guilds', { name: 'Big', description: 'x'.repeat(5000) });
+});
+
+test('unknown paths and methods', async () => {
+  const p = await newPlayer();
+  await fails(404, 'not_found', p, 'GET', '/nope');
+  await fails(405, 'method_not_allowed', p, 'PATCH', '/me', {});
+  await fails(404, 'guild_not_found', p, 'GET', '/guilds/not-an-id');
+  await fails(404, 'guild_not_found', p, 'GET', '/guilds/0123456789abcdef01234567');
+});
+
+test('create guild: validation, unique name, shows up in /me and search', async () => {
+  const a = await newPlayer('Alice');
+  const b = await newPlayer('Bob');
+  const name = uniq('Iron Wolves');
+  const { guild } = await ok(a, 'POST', '/guilds', { name: `  ${name}  `, description: 'We chop\ntrees' });
+  assert.equal(guild.name, name);
+  assert.equal(guild.description, 'We chop trees');
+  assert.equal(guild.rank, 'owner');
+  assert.equal(guild.ownerId, a.id);
+
+  await fails(409, 'name_taken', b, 'POST', '/guilds', { name: name.toUpperCase() });
+  for (const bad of ['ab', 'x'.repeat(25), 'bad!name', 'emoji 😀', 42, undefined]) {
+    await fails(400, 'invalid_guild_name', b, 'POST', '/guilds', { name: bad });
+  }
+  await fails(400, 'invalid_description', b, 'POST', '/guilds', { name: uniq('Ok'), description: 'd'.repeat(201) });
+  await ok(b, 'POST', '/guilds', { name: uniq('Ok_-9'), description: 'd'.repeat(200) });
+
+  const me = await ok(a, 'GET', '/me');
+  assert.deepEqual(me.guilds.map((g) => [g.id, g.rank]), [[guild.id, 'owner']]);
+  assert.deepEqual(me.invites, []);
+
+  const found = await ok(b, 'GET', `/guilds/search?q=${encodeURIComponent(name.slice(3).toUpperCase())}`);
+  assert.deepEqual(found.guilds.map((g) => [g.id, g.memberCount]), [[guild.id, 1]]);
+  // Regex characters in q are literal.
+  assert.deepEqual((await ok(b, 'GET', '/guilds/search?q=.*')).guilds, []);
+});
+
+test('join request: created, visible to staff only, accepted by officer', async () => {
+  const { owner, officer, member, guild } = await trio();
+  const joiner = await newPlayer('Joiner');
+
+  const r1 = await call(joiner, 'POST', `/guilds/${guild.id}/join`);
+  assert.equal(r1.status, 201);
+  assert.deepEqual(r1.body, { joined: false, requested: true });
+  assert.equal((await call(joiner, 'POST', `/guilds/${guild.id}/join`)).status, 200); // idempotent
+
+  // Outsider sees the member list without presence, and their own pending state.
+  const outside = await ok(joiner, 'GET', `/guilds/${guild.id}`);
+  assert.equal(outside.guild.myRank, null);
+  assert.equal(outside.guild.myPending, 'request');
+  assert.equal(outside.requests, undefined);
+  assert.equal(outside.members.length, 3);
+  assert.ok(outside.members.every((m) => !('lastSeen' in m) && !('status' in m)));
+  assert.deepEqual((await ok(joiner, 'GET', '/me')).requests.map((r) => r.guildId), [guild.id]);
+
+  // Plain members do not see or answer requests.
+  const asMember = await ok(member, 'GET', `/guilds/${guild.id}`);
+  assert.equal(asMember.requests, undefined);
+  assert.ok(asMember.members.every((m) => 'lastSeen' in m));
+  await fails(403, 'forbidden', member, 'POST', `/guilds/${guild.id}/requests/${joiner.id}`, { accept: true });
+  await fails(403, 'not_member', joiner, 'POST', `/guilds/${guild.id}/requests/${joiner.id}`, { accept: true });
+
+  const asOfficer = await ok(officer, 'GET', `/guilds/${guild.id}`);
+  assert.deepEqual(asOfficer.requests.map((r) => [r.playerId, r.name]), [[joiner.id, 'Joiner']]);
+  await fails(400, 'invalid_body', officer, 'POST', `/guilds/${guild.id}/requests/${joiner.id}`, { accept: 'yes' });
+  await ok(officer, 'POST', `/guilds/${guild.id}/requests/${joiner.id}`, { accept: true });
+  await fails(404, 'request_not_found', officer, 'POST', `/guilds/${guild.id}/requests/${joiner.id}`, { accept: true });
+
+  assert.equal((await ranks(owner, guild))[joiner.id], 'member');
+  assert.deepEqual((await ok(owner, 'GET', `/guilds/${guild.id}`)).requests, []);
+  await fails(409, 'already_member', joiner, 'POST', `/guilds/${guild.id}/join`);
+});
+
+test('join request: declined, and cancelled by the requester', async () => {
+  const owner = await newPlayer();
+  const p = await newPlayer();
+  const guild = await newGuild(owner);
+
+  await ok(p, 'POST', `/guilds/${guild.id}/join`);
+  await ok(owner, 'POST', `/guilds/${guild.id}/requests/${p.id}`, { accept: false });
+  assert.equal((await ok(p, 'GET', `/guilds/${guild.id}`)).guild.myPending, null);
+
+  await ok(p, 'POST', `/guilds/${guild.id}/join`);
+  await ok(p, 'DELETE', `/guilds/${guild.id}/join`);
+  assert.deepEqual((await ok(owner, 'GET', `/guilds/${guild.id}`)).requests, []);
+  assert.equal((await ok(owner, 'GET', `/guilds/${guild.id}`)).members.length, 1);
+});
+
+test('invite: staff only, shows in /me and /sync, accept and decline', async () => {
+  const { owner, officer, member, guild } = await trio();
+  const a = await newPlayer('InviteeA');
+  const b = await newPlayer('InviteeB');
+
+  await fails(403, 'forbidden', member, 'POST', `/guilds/${guild.id}/invite`, { steamId: a.id });
+  await fails(403, 'not_member', a, 'POST', `/guilds/${guild.id}/invite`, { steamId: b.id });
+  await fails(404, 'player_not_found', owner, 'POST', `/guilds/${guild.id}/invite`, { steamId: newSteamId() });
+  await fails(400, 'invalid_target', owner, 'POST', `/guilds/${guild.id}/invite`, { steamId: owner.id });
+  await fails(409, 'already_member', owner, 'POST', `/guilds/${guild.id}/invite`, { steamId: member.id });
+
+  assert.equal((await call(officer, 'POST', `/guilds/${guild.id}/invite`, { steamId: a.id })).status, 201);
+  assert.equal((await call(owner, 'POST', `/guilds/${guild.id}/invite`, { steamId: a.id })).status, 200); // idempotent
+  await ok(owner, 'POST', `/guilds/${guild.id}/invite`, { steamId: b.id });
+
+  const me = await ok(a, 'GET', '/me');
+  assert.deepEqual(
+    me.invites.map((i) => [i.guildId, i.guildName, i.by, i.byName]),
+    [[guild.id, guild.name, officer.id, 'Officer']],
+  );
+  assert.equal((await ok(a, 'POST', '/sync', {})).invites.length, 1);
+  assert.deepEqual((await ok(owner, 'GET', `/guilds/${guild.id}`)).invites.map((i) => i.playerId).sort(), [a.id, b.id].sort());
+
+  // Staff cannot accept on the invitee's behalf; nobody else can use the invite.
+  await fails(409, 'not_a_join_request', owner, 'POST', `/guilds/${guild.id}/requests/${a.id}`, { accept: true });
+  await fails(404, 'invite_not_found', member, 'POST', `/invites/${guild.id}`, { accept: true });
+
+  assert.deepEqual(await ok(a, 'POST', `/invites/${guild.id}`, { accept: true }), { ok: true, joined: true });
+  assert.equal((await ranks(owner, guild))[a.id], 'member');
+  assert.deepEqual((await ok(a, 'GET', '/me')).invites, []);
+  await fails(404, 'invite_not_found', a, 'POST', `/invites/${guild.id}`, { accept: true });
+
+  assert.deepEqual(await ok(b, 'POST', `/invites/${guild.id}`, { accept: false }), { ok: true, joined: false });
+  assert.equal((await ranks(owner, guild))[b.id], undefined);
+  assert.deepEqual((await ok(b, 'GET', '/me')).invites, []);
+
+  // Staff can cancel an invite.
+  const c = await newPlayer('InviteeC');
+  await ok(owner, 'POST', `/guilds/${guild.id}/invite`, { steamId: c.id });
+  await ok(officer, 'POST', `/guilds/${guild.id}/requests/${c.id}`, { accept: false });
+  assert.deepEqual((await ok(c, 'GET', '/me')).invites, []);
+});
+
+test('an invite and a join request for the same player meet in the middle', async () => {
+  const owner = await newPlayer();
+  const guild = await newGuild(owner);
+
+  const a = await newPlayer();
+  await ok(owner, 'POST', `/guilds/${guild.id}/invite`, { steamId: a.id });
+  assert.deepEqual(await ok(a, 'POST', `/guilds/${guild.id}/join`), { joined: true, requested: false });
+
+  const b = await newPlayer();
+  await ok(b, 'POST', `/guilds/${guild.id}/join`);
+  assert.deepEqual(await ok(owner, 'POST', `/guilds/${guild.id}/invite`, { steamId: b.id }), { joined: true, invited: false });
+
+  const r = await ranks(owner, guild);
+  assert.equal(r[a.id], 'member');
+  assert.equal(r[b.id], 'member');
+  const view = await ok(owner, 'GET', `/guilds/${guild.id}`);
+  assert.deepEqual([view.requests, view.invites], [[], []]);
+});
+
+test('rank changes: owner only', async () => {
+  const { owner, officer, member, guild } = await trio();
+  const path = (p) => `/guilds/${guild.id}/members/${p.id}/rank`;
+
+  await fails(403, 'forbidden', officer, 'POST', path(member), { rank: 'officer' });
+  await fails(403, 'forbidden', member, 'POST', path(officer), { rank: 'member' });
+  await fails(403, 'not_member', await newPlayer(), 'POST', path(member), { rank: 'officer' });
+  await fails(400, 'invalid_rank', owner, 'POST', path(member), { rank: 'owner' });
+  await fails(400, 'invalid_rank', owner, 'POST', path(member), { rank: 'king' });
+  await fails(400, 'invalid_target', owner, 'POST', path(owner), { rank: 'member' });
+  await fails(404, 'member_not_found', owner, 'POST', path(await newPlayer()), { rank: 'officer' });
+
+  await ok(owner, 'POST', path(member), { rank: 'officer' });
+  await ok(owner, 'POST', path(officer), { rank: 'member' });
+  assert.deepEqual(await ranks(owner, guild), { [owner.id]: 'owner', [officer.id]: 'member', [member.id]: 'officer' });
+});
+
+test('guild settings and disband: owner only', async () => {
+  const { owner, officer, member, guild } = await trio();
+  const other = await newGuild(await newPlayer());
+  for (const p of [officer, member]) {
+    await fails(403, 'forbidden', p, 'PATCH', `/guilds/${guild.id}`, { description: 'hax' });
+    await fails(403, 'forbidden', p, 'DELETE', `/guilds/${guild.id}`);
+    await fails(403, 'forbidden', p, 'POST', `/guilds/${guild.id}/transfer`, { playerId: p.id });
+  }
+  await fails(403, 'not_member', await newPlayer(), 'PATCH', `/guilds/${guild.id}`, { description: 'hax' });
+  await fails(400, 'nothing_to_update', owner, 'PATCH', `/guilds/${guild.id}`, {});
+  await fails(409, 'name_taken', owner, 'PATCH', `/guilds/${guild.id}`, { name: other.name.toLowerCase() });
+  await fails(400, 'invalid_guild_name', owner, 'PATCH', `/guilds/${guild.id}`, { name: 'x' });
+
+  const newName = uniq('Renamed');
+  const patched = await ok(owner, 'PATCH', `/guilds/${guild.id}`, { name: newName, description: 'New words' });
+  assert.equal(patched.guild.name, newName);
+  const view = await ok(member, 'GET', `/guilds/${guild.id}`);
+  assert.deepEqual([view.guild.name, view.guild.description], [newName, 'New words']);
+  // Renaming to the same name in a different case is allowed.
+  await ok(owner, 'PATCH', `/guilds/${guild.id}`, { name: newName.toUpperCase() });
+});
+
+test('kick rules: officers kick members only, owner kicks anyone but self', async () => {
+  const { owner, officer, member, guild } = await trio();
+  const officer2 = await newPlayer('Officer2');
+  const member2 = await newPlayer('Member2');
+  await addTo(guild, owner, officer2);
+  await addTo(guild, owner, member2);
+  await ok(owner, 'POST', `/guilds/${guild.id}/members/${officer2.id}/rank`, { rank: 'officer' });
+  const kick = (p) => `/guilds/${guild.id}/members/${p.id}`;
+
+  await fails(403, 'forbidden', member, 'DELETE', kick(member2));
+  await fails(403, 'forbidden', member, 'DELETE', kick(officer));
+  await fails(403, 'not_member', await newPlayer(), 'DELETE', kick(member));
+  await fails(403, 'forbidden', officer, 'DELETE', kick(officer2));
+  await fails(403, 'forbidden', officer, 'DELETE', kick(owner));
+  await fails(400, 'invalid_target', officer, 'DELETE', kick(officer));
+  await fails(400, 'invalid_target', owner, 'DELETE', kick(owner));
+  await fails(404, 'member_not_found', owner, 'DELETE', kick(await newPlayer()));
+
+  await ok(officer, 'DELETE', kick(member2));
+  await ok(owner, 'DELETE', kick(officer2));
+  await ok(owner, 'DELETE', kick(member));
+  assert.deepEqual(await ranks(owner, guild), { [owner.id]: 'owner', [officer.id]: 'officer' });
+  assert.deepEqual((await ok(member, 'GET', '/me')).guilds, []);
+  await fails(403, 'not_member', member, 'POST', `/guilds/${guild.id}/messages`, { body: 'still here?' });
+});
+
+test('transfer: old owner becomes officer, new owner has owner powers', async () => {
+  const { owner, officer, member, guild } = await trio();
+  await fails(400, 'invalid_target', owner, 'POST', `/guilds/${guild.id}/transfer`, { playerId: owner.id });
+  await fails(404, 'member_not_found', owner, 'POST', `/guilds/${guild.id}/transfer`, { playerId: (await newPlayer()).id });
+  await fails(400, 'invalid_steam_id', owner, 'POST', `/guilds/${guild.id}/transfer`, {});
+
+  assert.deepEqual(await ok(owner, 'POST', `/guilds/${guild.id}/transfer`, { playerId: member.id }), { ok: true, ownerId: member.id });
+  assert.deepEqual(await ranks(owner, guild), { [owner.id]: 'officer', [officer.id]: 'officer', [member.id]: 'owner' });
+  assert.equal((await ok(member, 'GET', '/me')).guilds[0].rank, 'owner');
+  assert.equal((await ok(owner, 'GET', '/me')).guilds[0].rank, 'officer');
+
+  await fails(403, 'forbidden', owner, 'PATCH', `/guilds/${guild.id}`, { description: 'mine?' });
+  await fails(403, 'forbidden', owner, 'POST', `/guilds/${guild.id}/transfer`, { playerId: officer.id });
+  await ok(member, 'PATCH', `/guilds/${guild.id}`, { description: 'mine now' });
+  await ok(owner, 'POST', `/guilds/${guild.id}/leave`); // the old owner may now leave
+});
+
+test('leave: members and officers can, the owner cannot', async () => {
+  const { owner, officer, member, guild } = await trio();
+  await fails(409, 'owner_cannot_leave', owner, 'POST', `/guilds/${guild.id}/leave`);
+  await fails(403, 'not_member', await newPlayer(), 'POST', `/guilds/${guild.id}/leave`);
+  await ok(member, 'POST', `/guilds/${guild.id}/leave`);
+  await ok(officer, 'POST', `/guilds/${guild.id}/leave`);
+  await fails(403, 'not_member', member, 'POST', `/guilds/${guild.id}/leave`);
+  assert.deepEqual(await ranks(owner, guild), { [owner.id]: 'owner' });
+});
+
+test('disband removes the guild, members, requests and messages', async () => {
+  const { owner, officer, member, guild } = await trio();
+  const pending = await newPlayer();
+  const invited = await newPlayer();
+  await ok(pending, 'POST', `/guilds/${guild.id}/join`);
+  await ok(owner, 'POST', `/guilds/${guild.id}/invite`, { steamId: invited.id });
+  await ok(member, 'POST', `/guilds/${guild.id}/messages`, { body: 'last words' });
+
+  await ok(owner, 'DELETE', `/guilds/${guild.id}`);
+
+  await fails(404, 'guild_not_found', owner, 'GET', `/guilds/${guild.id}`);
+  for (const p of [owner, officer, member, pending, invited]) {
+    const me = await ok(p, 'GET', '/me');
+    assert.deepEqual([me.guilds, me.invites, me.requests], [[], [], []]);
+  }
+  for (const col of ['guilds', 'members', 'requests', 'messages']) {
+    const filter = col === 'guilds' ? { nameLower: guild.name.toLowerCase() } : { guildId: { $exists: true } };
+    const left = (await db.collection(col).find(filter).toArray()).filter((d) => col === 'guilds' || String(d.guildId) === guild.id);
+    assert.equal(left.length, 0, `${col} still has documents for the disbanded guild`);
+  }
+  // The name is free again.
+  await ok(owner, 'POST', '/guilds', { name: guild.name });
+});
+
+test('messages: members only, validated, control characters stripped', async () => {
+  const { owner, member, guild } = await trio();
+  const outsider = await newPlayer();
+  const path = `/guilds/${guild.id}/messages`;
+
+  await fails(403, 'not_member', outsider, 'POST', path, { body: 'hi' });
+  await fails(403, 'not_member', outsider, 'GET', path);
+  await fails(400, 'invalid_message', member, 'POST', path, { body: '' });
+  await fails(400, 'invalid_message', member, 'POST', path, { body: ' \u0000\u0007 ' });
+  await fails(400, 'invalid_message', member, 'POST', path, { body: 'x'.repeat(301) });
+  await fails(400, 'invalid_message', member, 'POST', path, { body: 5 });
+
+  const r = await call(member, 'POST', path, { body: '  he\u0000llo\u202e\tthere\r\n ' });
+  assert.equal(r.status, 201);
+  assert.equal(r.body.message.body, 'hello there');
+  assert.equal(r.body.message.name, 'Member');
+  assert.equal(r.body.message.playerId, member.id);
+  assert.equal(r.body.message.guildId, guild.id);
+  await ok(owner, 'POST', path, { body: 'x'.repeat(300) });
+
+  const history = await ok(owner, 'GET', path);
+  assert.deepEqual(history.messages.map((m) => m.body), ['hello there', 'x'.repeat(300)]);
+});
+
+test('sync: presence, status, and a cursor that delivers each message once', async () => {
+  const { owner, member, guild } = await trio();
+  const other = await newGuild(member); // member is in two guilds
+  const post = (p, g, body) => ok(p, 'POST', `/guilds/${g.id}/messages`, { body });
+
+  await post(owner, guild, 'one');
+  await post(member, other, 'two');
+
+  // First sync without a cursor returns recent history from all my guilds.
+  const s1 = await ok(member, 'POST', '/sync', { status: { skill: 'Woodcutting', level: 42 } });
+  assert.deepEqual(s1.messages.map((m) => m.body), ['one', 'two']);
+  assert.deepEqual(s1.guilds.map((g) => [g.id, g.rank]).sort(), [[guild.id, 'member'], [other.id, 'owner']].sort());
+  assert.equal(typeof s1.cursor, 'string');
+  assert.equal(typeof s1.now, 'number');
+
+  // Nothing new: nothing repeated, even though the server re-reads the overlap window.
+  const s2 = await ok(member, 'POST', '/sync', { since: s1.cursor });
+  assert.deepEqual(s2.messages, []);
+
+  await post(owner, guild, 'three');
+  await post(member, guild, 'four');
+  const s3 = await ok(member, 'POST', '/sync', { since: s2.cursor });
+  assert.deepEqual(s3.messages.map((m) => m.body), ['three', 'four']);
+  const s4 = await ok(member, 'POST', '/sync', { since: s3.cursor });
+  assert.deepEqual(s4.messages, []);
+
+  // The owner is only in the first guild and never sees the other guild's messages.
+  const o1 = await ok(owner, 'POST', '/sync', {});
+  assert.deepEqual(o1.messages.map((m) => m.body), ['one', 'three', 'four']);
+  assert.equal(o1.guilds.length, 1);
+
+  // Presence: the member's status and lastSeen are visible to guild mates.
+  const seen = o1.guilds[0].members.find((m) => m.id === member.id);
+  assert.equal(seen.rank, 'member');
+  assert.equal(seen.status.skill, 'Woodcutting');
+  assert.equal(seen.status.level, 42);
+  assert.ok(Math.abs(seen.lastSeen - Date.now()) < 60_000);
+  assert.equal(o1.guilds[0].members[0].rank, 'owner'); // sorted by rank
+
+  // Omitting status keeps it; null clears it; name can be refreshed.
+  await ok(member, 'POST', '/sync', { since: s4.cursor });
+  let view = await ok(owner, 'GET', `/guilds/${guild.id}`);
+  assert.equal(view.members.find((m) => m.id === member.id).status.skill, 'Woodcutting');
+  await ok(member, 'POST', '/sync', { since: s4.cursor, status: null, name: 'Member Renamed' });
+  view = await ok(owner, 'GET', `/guilds/${guild.id}`);
+  const m = view.members.find((x) => x.id === member.id);
+  assert.equal(m.status, null);
+  assert.equal(m.name, 'Member Renamed');
+
+  await fails(400, 'invalid_cursor', member, 'POST', '/sync', { since: 'yesterday' });
+  await fails(400, 'invalid_status', member, 'POST', '/sync', { status: { skill: 'x', level: -1 } });
+  await fails(401, 'unauthorized', { id: member.id, key: newKey() }, 'POST', '/sync', {});
+  await fails(401, 'unauthorized', null, 'POST', '/sync', {});
+});
+
+test('sync: a message stamped just before the cursor is still delivered once', async () => {
+  const owner = await newPlayer();
+  const guild = await newGuild(owner);
+  await ok(owner, 'POST', `/guilds/${guild.id}/messages`, { body: 'first' });
+  const s1 = await ok(owner, 'POST', '/sync', {});
+  assert.equal(s1.messages.length, 1);
+
+  // Simulate an insert from another server instance that landed late with an older timestamp.
+  const first = await db.collection('messages').findOne({ body: 'first', playerId: owner.id });
+  await db.collection('messages').insertOne({
+    guildId: first.guildId, playerId: owner.id, name: 'Player', body: 'late', at: new Date(first.at.getTime() - 500),
+  });
+  const s2 = await ok(owner, 'POST', '/sync', { since: s1.cursor });
+  assert.deepEqual(s2.messages.map((m) => m.body), ['late']);
+  const s3 = await ok(owner, 'POST', '/sync', { since: s2.cursor });
+  assert.deepEqual(s3.messages, []);
+});
+
+test('sync: large backlogs are paged without loss', async () => {
+  const fetcher = makeFetch({ syncMaxMessages: 3, syncInitialMessages: 2, rate: { register: [10_000, 3_600_000] } });
+  const owner = await newPlayer();
+  const guild = await newGuild(owner);
+  const s0 = await ok(owner, 'POST', '/sync', {}, { fetcher });
+  const gid = (await db.collection('members').findOne({ playerId: owner.id })).guildId;
+  const base = Date.now();
+  await db.collection('messages').insertMany(
+    Array.from({ length: 8 }, (_, i) => ({ guildId: gid, playerId: owner.id, name: 'Player', body: `m${i}`, at: new Date(base + i) })),
+  );
+  const got = [];
+  let cursor = s0.cursor;
+  for (let i = 0; i < 5; i++) {
+    const s = await ok(owner, 'POST', '/sync', { since: cursor }, { fetcher });
+    assert.ok(s.messages.length <= 3);
+    got.push(...s.messages.map((m) => m.body));
+    cursor = s.cursor;
+  }
+  assert.deepEqual(got, ['m0', 'm1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7']);
+  // A fresh client only gets the newest few.
+  const fresh = await ok(owner, 'POST', '/sync', {}, { fetcher });
+  assert.deepEqual(fresh.messages.map((m) => m.body), ['m6', 'm7']);
+  assert.equal(guild.id, String(gid));
+});
+
+test('limit: at most 3 guilds per player', async () => {
+  const p = await newPlayer();
+  for (let i = 0; i < 3; i++) await newGuild(p);
+  await fails(409, 'guild_limit', p, 'POST', '/guilds', { name: uniq('Fourth') });
+
+  const owner = await newPlayer();
+  const fourth = await newGuild(owner);
+  await fails(409, 'guild_limit', p, 'POST', `/guilds/${fourth.id}/join`);
+  // An invite can be sent but not accepted while at the limit; it survives for later.
+  await ok(owner, 'POST', `/guilds/${fourth.id}/invite`, { steamId: p.id });
+  await fails(409, 'guild_limit', p, 'POST', `/invites/${fourth.id}`, { accept: true });
+  assert.equal((await ok(p, 'GET', '/me')).invites.length, 1);
+  assert.equal((await ok(p, 'GET', '/me')).guilds.length, 3);
+
+  const mine = (await ok(p, 'GET', '/me')).guilds[0];
+  await ok(p, 'DELETE', `/guilds/${mine.id}`);
+  await ok(p, 'POST', `/invites/${fourth.id}`, { accept: true });
+  assert.equal((await ok(p, 'GET', '/me')).guilds.length, 3);
+});
+
+test('limit: member cap per guild (cap lowered to 3 for the test)', async () => {
+  const fetcher = makeFetch({ maxMembersPerGuild: 3, rate: { register: [10_000, 3_600_000] } });
+  const owner = await newPlayer();
+  const guild = await newGuild(owner);
+  const [a, b, c, d] = [await newPlayer(), await newPlayer(), await newPlayer(), await newPlayer()];
+  const o = { fetcher };
+
+  await ok(a, 'POST', `/guilds/${guild.id}/join`, undefined, o);
+  await ok(b, 'POST', `/guilds/${guild.id}/join`, undefined, o);
+  await ok(c, 'POST', `/guilds/${guild.id}/join`, undefined, o);
+  await ok(owner, 'POST', `/guilds/${guild.id}/requests/${a.id}`, { accept: true }, o);
+  await ok(owner, 'POST', `/guilds/${guild.id}/requests/${b.id}`, { accept: true }, o);
+  // Full: the queued request cannot be accepted, new requests and invites are refused.
+  await fails(409, 'guild_full', owner, 'POST', `/guilds/${guild.id}/requests/${c.id}`, { accept: true }, o);
+  await fails(409, 'guild_full', d, 'POST', `/guilds/${guild.id}/join`, undefined, o);
+  await fails(409, 'guild_full', owner, 'POST', `/guilds/${guild.id}/invite`, { steamId: d.id }, o);
+  assert.equal((await ok(owner, 'GET', `/guilds/${guild.id}`, undefined, o)).members.length, 3);
+
+  // A free slot makes the still-pending request acceptable.
+  await ok(a, 'POST', `/guilds/${guild.id}/leave`, undefined, o);
+  await ok(owner, 'POST', `/guilds/${guild.id}/requests/${c.id}`, { accept: true }, o);
+});
+
+test('limit: the real default member cap is 50', async () => {
+  const owner = await newPlayer();
+  const guild = await newGuild(owner);
+  const gid = (await db.collection('members').findOne({ playerId: owner.id }))._id && (await db.collection('members').findOne({ playerId: owner.id })).guildId;
+  // Fill to 50 directly, then go through the API for number 51.
+  await db.collection('members').insertMany(
+    Array.from({ length: 49 }, (_, i) => ({ guildId: gid, playerId: `filler-${guild.id}-${i}`, rank: 'member', joinedAt: new Date() })),
+  );
+  const p = await newPlayer();
+  await fails(409, 'guild_full', p, 'POST', `/guilds/${guild.id}/join`);
+  await fails(409, 'guild_full', owner, 'POST', `/guilds/${guild.id}/invite`, { steamId: p.id });
+});
+
+test('rate limits: writes, messages and registration', async () => {
+  const fetcher = makeFetch({ rate: { write: [5, 60_000], message: [2, 60_000], register: [3, 3_600_000], sync: [2, 60_000], read: [3, 60_000] } });
+  const o = { fetcher };
+  const p = await newPlayer();
+  const q = await newPlayer();
+  const guild = await newGuild(p); // counters live in the database, so this create is write 1 of 5
+
+  await ok(p, 'POST', `/guilds/${guild.id}/messages`, { body: '1' }, o);
+  await ok(p, 'POST', `/guilds/${guild.id}/messages`, { body: '2' }, o);
+  await fails(429, 'rate_limited', p, 'POST', `/guilds/${guild.id}/messages`, { body: '3' }, o);
+  // Other writes still pass until the write budget (5) is used up: 4 used so far.
+  await ok(p, 'PATCH', `/guilds/${guild.id}`, { description: 'a' }, o);
+  await fails(429, 'rate_limited', p, 'PATCH', `/guilds/${guild.id}`, { description: 'c' }, o);
+  // Limits are per player.
+  await ok(q, 'POST', `/guilds/${guild.id}/join`, undefined, o);
+
+  await ok(q, 'POST', '/sync', {}, o);
+  await ok(q, 'POST', '/sync', {}, o);
+  await fails(429, 'rate_limited', q, 'POST', '/sync', {}, o);
+
+  for (let i = 0; i < 3; i++) await ok(q, 'GET', '/me', undefined, o);
+  await fails(429, 'rate_limited', q, 'GET', '/me', undefined, o);
+
+  // Registration is limited per IP.
+  const ip = { fetcher, headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.1' } };
+  for (let i = 0; i < 3; i++) await ok(null, 'POST', '/register', { steamId: newSteamId(), name: 'R', key: newKey() }, ip);
+  await fails(429, 'rate_limited', null, 'POST', '/register', { steamId: newSteamId(), name: 'R', key: newKey() }, ip);
+  await ok(null, 'POST', '/register', { steamId: newSteamId(), name: 'R', key: newKey() }, { fetcher, headers: { 'x-forwarded-for': '203.0.113.10' } });
+});
+
+test('delete my data: refused while owning a guild, then removes everything', async () => {
+  const { owner, officer, member, guild } = await trio();
+  const other = await newGuild(officer);
+  const target = await newPlayer();
+  await ok(member, 'POST', `/guilds/${other.id}/join`); // a pending request of mine
+  await ok(member, 'POST', `/guilds/${guild.id}/messages`, { body: 'remember me' });
+  await ok(owner, 'POST', `/guilds/${guild.id}/messages`, { body: 'stays' });
+  await ok(owner, 'POST', `/guilds/${guild.id}/members/${member.id}/rank`, { rank: 'officer' });
+  await ok(member, 'POST', `/guilds/${guild.id}/invite`, { steamId: target.id }); // an invite I issued
+
+  await fails(409, 'owns_guild', owner, 'DELETE', '/me');
+
+  assert.deepEqual(await ok(member, 'DELETE', '/me'), { ok: true });
+  await fails(401, 'unauthorized', member, 'GET', '/me');
+  assert.equal(await db.collection('players').countDocuments({ _id: member.id }), 0);
+  for (const col of ['members', 'requests', 'messages']) {
+    assert.equal(await db.collection(col).countDocuments({ playerId: member.id }), 0, col);
+  }
+  assert.equal(await db.collection('requests').countDocuments({ by: member.id }), 0);
+  assert.deepEqual(await ranks(owner, guild), { [owner.id]: 'owner', [officer.id]: 'officer' });
+  assert.deepEqual((await ok(owner, 'GET', `/guilds/${guild.id}/messages`)).messages.map((m) => m.body), ['stays']);
+  assert.deepEqual((await ok(officer, 'GET', `/guilds/${other.id}`)).requests, []);
+
+  // The Steam ID can be registered again, with a new key.
+  const again = { id: member.id, key: newKey() };
+  await ok(null, 'POST', '/register', { steamId: again.id, name: 'Back', key: again.key });
+  assert.deepEqual((await ok(again, 'GET', '/me')).guilds, []);
+
+  // After a transfer the old owner can delete their data too.
+  await ok(owner, 'POST', `/guilds/${guild.id}/transfer`, { playerId: officer.id });
+  await ok(owner, 'DELETE', '/me');
+  assert.deepEqual(await ranks(officer, guild), { [officer.id]: 'owner' });
+});
+
+test('indexes exist, including the 14 day message expiry', async () => {
+  const idx = async (col) => db.collection(col).indexes();
+  const ttl = (await idx('messages')).find((i) => i.expireAfterSeconds !== undefined);
+  assert.equal(ttl.expireAfterSeconds, 14 * 24 * 60 * 60);
+  assert.deepEqual(ttl.key, { at: 1 });
+  assert.ok((await idx('guilds')).some((i) => i.unique && i.key.nameLower === 1));
+  assert.ok((await idx('members')).some((i) => i.unique && i.key.guildId === 1 && i.key.playerId === 1));
+  assert.ok((await idx('requests')).some((i) => i.unique && i.key.guildId === 1 && i.key.playerId === 1));
+});
