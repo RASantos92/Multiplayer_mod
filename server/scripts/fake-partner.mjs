@@ -7,6 +7,9 @@
 //                                                               fixed action, e.g. MelvorBase:Fishing MelvorBase:RapidRuns
 //   node scripts/fake-partner.mjs --stop                         make a running or crashed one leave and delete itself
 //
+// When the action is combat (MelvorBase:Combat) it also reports health, DPS and a combat level:
+//   --dps <n> (default: the same DPS as the member it mirrors, else 100), --interval <ms between attacks> (default 3000), --hit <chance to hit, percent> (default: the same as the member it mirrors, else 80), --level <n> (default: the same combat level as the member it mirrors, else 30).
+//
 // Options: --url <base url> (default https://melvor2-guilds.vercel.app), --minutes <n> (default 20, then it cleans up).
 // Ctrl+C also cleans up. Credentials for --stop are kept in the OS temp folder, never in the repo.
 
@@ -25,6 +28,11 @@ const take = (flag, fallback) => {
 };
 const base = take('--url', 'https://melvor2-guilds.vercel.app').replace(/\/$/, '');
 const minutes = Number(take('--minutes', '20'));
+const fakeDps = take('--dps', null);
+const fakeHit = take('--hit', null);
+const fakeName = take('--name', 'Test Partner');
+const fakeInterval = Number(take('--interval', '3000'));
+const fakeLevel = take('--level', null);
 const stateFile = join(tmpdir(), 'melvor2-fake-partner.json');
 
 let auth = null;
@@ -69,10 +77,10 @@ if (!guildName) {
 }
 
 // A Steam-ID-shaped number in a range real accounts do not use, and a random key.
-auth = { steamId: '7656120' + String(randomInt(1_000_000_000, 9_999_999_999)), key: randomBytes(36).toString('base64') };
+auth = { steamId: '7656120' + String(randomInt(1_000_000_000, 2_000_000_000)), key: randomBytes(36).toString('base64') };
 await writeFile(stateFile, JSON.stringify(auth));
 
-const reg = await call('POST', '/register', { steamId: auth.steamId, name: 'Test Partner', key: auth.key });
+const reg = await call('POST', '/register', { steamId: auth.steamId, name: fakeName, key: auth.key });
 if (!reg.ok) { console.error('Register failed:', reg.json); process.exit(1); }
 
 process.on('SIGINT', async () => { await cleanup('Ctrl+C'); process.exit(0); });
@@ -83,7 +91,7 @@ if (!guild) { console.error(`No guild named "${guildName}".`); await cleanup('gu
 
 const joined = await call('POST', `/guilds/${guild.id}/join`, {});
 if (!joined.ok) { console.error('Join request failed:', joined.json); await cleanup('join failed'); process.exit(1); }
-console.log(`"Test Partner" asked to join "${guild.name}". Accept it in game: Guild window > Owner tab > Join requests.`);
+console.log(`"${fakeName}" asked to join "${guild.name}". Accept it in game: Guild window > Owner tab > Join requests.`);
 
 const profile = {
   skills: [
@@ -122,11 +130,21 @@ while (Date.now() < deadline) {
     if (other) action = other.status.action;
   }
 
+  let combat;
+  if (mine && action?.entity === 'MelvorBase:Combat') {
+    // Copy a real player, not another fake one (fake Steam IDs start with 7656120).
+    const peer = mine.members.find((m) => !m.id.startsWith('7656120') && m.status?.combat);
+    const level = fakeLevel !== null ? Number(fakeLevel) : peer?.status.combat.level ?? 30;
+    // Health wobbles so the bar in the Players tab visibly moves.
+    const dps = fakeDps !== null ? Number(fakeDps) : peer?.status.combat.dps ?? 100;
+    combat = { hp: 200 + randomInt(0, 150), maxHp: 350, dps, level, interval: fakeInterval, hit: fakeHit !== null ? Number(fakeHit) : peer?.status.combat.hit ?? 80 };
+  }
+
   if (mine) {
-    const status = action ? { skill: action.entity.split(':')[1], level: 75, action } : null;
+    const status = action ? { skill: action.entity.split(':')[1], level: 75, action, ...(combat ? { combat } : {}) } : null;
     const sent = await call('POST', '/sync', { since: cursor, status });
     if (sent.ok) cursor = sent.json.cursor ?? cursor;
-    const shown = action ? `${action.entity} | ${action.target}` : '(idle: nobody to mirror)';
+    const shown = action ? `${action.entity} | ${action.target}` + (combat ? ` (combat level ${combat.level}, ${combat.dps} DPS, hits ${combat.hit}%)` : '') : '(idle: nobody to mirror)';
     if (shown !== lastShown) { console.log(`Reporting: ${shown}`); lastShown = shown; }
     if (!sent.ok) console.log('Sync refused:', JSON.stringify(sent.json));
   }

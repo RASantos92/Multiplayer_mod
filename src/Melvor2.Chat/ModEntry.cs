@@ -11,7 +11,7 @@ namespace Melvor2.Chat;
 /// <summary>Found and called by Melvor2.ModLoader.</summary>
 public static class ModEntry
 {
-    public const string Version = "0.3.0";
+    public const string Version = "0.4.0";
 
     private static SceneTree? s_tree;
     private static ChatPanel? s_panel;
@@ -20,11 +20,15 @@ public static class ModEntry
     private static GuildService? s_guilds;
     private static bool s_failed;
     private static ActivityInfo? s_activity;
+    private static CombatInfo? s_combat;
     private static double s_sinceGameWork;
     private static double s_sinceProfile = 60;
 
     /// <summary>The party XP bonus (one per game session).</summary>
     internal static PartyBoost Boost { get; } = new();
+
+    /// <summary>Shared combat: the guild mates in my fight and the damage they add.</summary>
+    internal static PartyCombat Fight { get; } = new();
 
     /// <summary>The loaded game when it is safe to touch (main thread, not paused), otherwise null.</summary>
     internal static Game? CurrentGame() => s_tree == null ? null : GameAccess.Current(s_tree);
@@ -63,24 +67,32 @@ public static class ModEntry
         {
             // Menus, loading, or offline progress running on another thread: touch nothing.
             s_activity = null;
+            s_combat = null;
             s_guilds.Party = false;
+            s_guilds.CombatParty = false;
+            Fight.Clear();
             return;
         }
 
         try
         {
             s_activity = ActivityTracker.Read(game, out ActionComponent? component);
+            s_combat = component?.Entity is GamesByMalcs.Melvor2.Entities.Combat.CombatEntity combat ? CombatAccess.Read(combat) : null;
 
             if (!s_guilds.Enabled)
             {
                 Boost.Clear();
+                Fight.Clear();
                 s_guilds.Party = false;
+                s_guilds.CombatParty = false;
                 return;
             }
 
-            string? partner = s_activity == null ? null : s_guilds.FindPartner(s_activity.Key);
-            Boost.Update(game, s_activity, component, partner, s_guilds.LastSyncUtc);
-            s_guilds.Party = partner != null || Boost.Active;
+            IReadOnlyList<MemberInfo> party = s_activity == null ? Array.Empty<MemberInfo>() : s_guilds.FindParty(s_activity.Key);
+            Boost.Update(game, s_activity, component, party, s_guilds.LastSyncUtc);
+            Fight.Update(s_combat, party, s_guilds.LastSyncUtc, s_guilds.ServerNow);
+            s_guilds.Party = party.Count > 0 || Boost.Active;
+            s_guilds.CombatParty = s_combat != null && party.Count > 0;
 
             if (s_sinceProfile >= 10)
             {
@@ -105,9 +117,9 @@ public static class ModEntry
             {
                 s_panel = new ChatPanel(s_tree!.Root);
                 s_panel.AddSystemLine("Chat mod v" + Version + ". Waiting for Steam...");
-                s_guilds = new GuildService { Activity = () => s_activity };
+                s_guilds = new GuildService { Activity = () => s_activity, Combat = () => s_combat };
                 Boost.Changed += () => s_panel.AddSystemLine(Boost.Active
-                    ? "Party bonus on: +5% " + Boost.SkillName + " XP while you train with " + Boost.PartnerName + "."
+                    ? "Party bonus on: " + Boost.PercentText + " " + Boost.SkillName + " XP while you train with " + Boost.PartnerName + "."
                     : "Party bonus ended.");
                 s_panel.BindGuilds(s_guilds);
                 s_hook = new GameUiHook(s_tree, s_panel, s_guilds);
@@ -131,6 +143,7 @@ public static class ModEntry
                 s_guilds.Active = s_panel.ShowingGuildChannel || (s_hook?.GuildWindowOpen ?? false);
                 s_guilds.Tick(delta);
                 GameWork(delta);
+                Fight.Frame(CurrentGame(), delta);
             }
 
             try
@@ -145,6 +158,7 @@ public static class ModEntry
             }
             if (UiProbe.Requested) UiProbe.Tick(s_tree!);
             if (GameState.GameProbe.Requested) GameState.GameProbe.Tick(s_tree!);
+            if (GameState.CombatProbe.Requested) GameState.CombatProbe.Tick(s_tree!, delta);
 
             bool down = Input.IsKeyPressed(Key.F8);
             if (down && !s_hotkeyDown) s_panel.Toggle();

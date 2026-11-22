@@ -23,6 +23,7 @@ internal sealed class GameUiHook
     private Label? _chatBadgeLabel;
     private GuildWindow? _guild;
     private bool _escDown;
+    private CombatTabHook? _combatTab;
 
     public bool GuildWindowOpen => _guild is { IsOpen: true };
 
@@ -37,6 +38,7 @@ internal sealed class GameUiHook
     public void Tick(double delta)
     {
         _guild?.Tick(delta);
+        _combatTab?.Frame();
 
         // Close the guild window on Esc, like the game's own popups.
         bool esc = Input.IsKeyPressed(Key.Escape);
@@ -55,9 +57,24 @@ internal sealed class GameUiHook
             _guild = null;
             return;
         }
+
+        // The combat screen comes and goes with the Combat page, so it is checked every time.
+        if (_combatTab != null)
+        {
+            try
+            {
+                _combatTab.Tick(view);
+            }
+            catch (Exception e)
+            {
+                _combatTab = null;
+                ModEntry.Log("Players tab disabled after error: " + e);
+            }
+        }
         if (view.GetInstanceId() == _viewId) return;
 
         _viewId = view.GetInstanceId();
+        _combatTab = new CombatTabHook(_guilds);
         Try("chat button", () => AddChatButton(view));
         NativeStyle? style = null;
         Try("native style", () => style = new NativeStyle(view));

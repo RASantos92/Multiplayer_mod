@@ -108,6 +108,8 @@ function vStatus(v, nowMs) {
   const status = { skill, level, at: new Date(nowMs) };
   // Optional; a status sent without it clears the stored action.
   if (v.action !== undefined && v.action !== null) status.action = vAction(v.action);
+  // Optional, sent while fighting; a status sent without it clears the stored combat state.
+  if (v.combat !== undefined && v.combat !== null) status.combat = vCombat(v.combat);
   return status;
 }
 
@@ -115,6 +117,29 @@ const GAME_ID_RE = /^[A-Z][A-Za-z0-9]*:[A-Z][A-Za-z0-9]*$/;
 const isGameId = (v) => typeof v === 'string' && v.length <= 80 && GAME_ID_RE.test(v);
 const isIntIn = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// What a player in a fight shares with guild mates: health, damage per second and combat level.
+// The server cannot verify these; it only keeps them inside sane ranges.
+function vCombat(c) {
+  const fail = (m) => bad('invalid_status', `status.combat${m}`);
+  if (!isObj(c)) throw fail(' must be an object');
+  if (!isIntIn(c.maxHp, 1, 1e9)) throw fail('.maxHp must be an integer from 1 to 1000000000');
+  if (!isIntIn(c.hp, 0, 1e9)) throw fail('.hp must be an integer from 0 to 1000000000');
+  if (!isIntIn(c.dps, 0, 1e9)) throw fail('.dps must be an integer from 0 to 1000000000');
+  if (!isIntIn(c.level, 0, 100000)) throw fail('.level must be an integer from 0 to 100000');
+  const out = { hp: Math.min(c.hp, c.maxHp), maxHp: c.maxHp, dps: c.dps, level: c.level };
+  // Optional: milliseconds between the player's attacks, so their damage can land in the same rhythm.
+  if (c.interval !== undefined && c.interval !== null) {
+    if (!isIntIn(c.interval, 250, 60000)) throw fail('.interval must be an integer from 250 to 60000');
+    out.interval = c.interval;
+  }
+  // Optional: the player's chance to hit, in percent, so their hits on my enemy can miss as often as theirs do.
+  if (c.hit !== undefined && c.hit !== null) {
+    if (!isIntIn(c.hit, 1, 100)) throw fail('.hit must be an integer from 1 to 100');
+    out.hit = c.hit;
+  }
+  return out;
+}
 
 function vAction(a) {
   const fail = (m) => bad('invalid_status', `status.action${m}`);
@@ -200,7 +225,7 @@ const guildOut = (g, extra = {}) => ({
   ...extra,
 });
 const statusOut = (s) =>
-  s ? { skill: s.skill, level: s.level, at: ms(s.at), ...(s.action ? { action: s.action } : {}) } : null;
+  s ? { skill: s.skill, level: s.level, at: ms(s.at), ...(s.action ? { action: s.action } : {}), ...(s.combat ? { combat: s.combat } : {}) } : null;
 const profileOut = (p) => (p ? { skills: p.skills, gear: p.gear, updatedAt: ms(p.updatedAt) } : null);
 const messageOut = (m) => ({
   id: String(m._id),

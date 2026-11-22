@@ -1,9 +1,10 @@
 # Builds dist\Melvor2Chat.zip for friends (upload it to a GitHub release): mod DLLs, a self-contained patcher
 # (no .NET install needed on their PC) and double-click install/uninstall scripts.
 # Contains none of the game's own files.
-param([string]$Version = '0.3.0')
+param([string]$Version = '0.4.0')
 
 . "$PSScriptRoot\common.ps1"
+. "$PSScriptRoot\sign.ps1"
 $dotnet = (Get-Command dotnet -ErrorAction SilentlyContinue).Source
 if (-not $dotnet) { $dotnet = 'C:\Program Files\dotnet\dotnet.exe' }
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
@@ -30,5 +31,11 @@ Copy-Item (Join-Path $RepoRoot 'src\Melvor2.Chat\bin\Release\net10.0\Melvor2.Cha
 Copy-Item (Join-Path $PSScriptRoot 'dist-template\*') $stage
 Set-Content (Join-Path $stage 'VERSION.txt') $Version -Encoding ascii
 
+# Sign everything Windows will be asked to run or load: the mod DLLs, the patcher and the scripts.
+$toSign = @("$stage\files\Melvor2.ModLoader.dll", "$stage\files\Melvor2.Chat.dll", "$stage\patcher\Melvor2.Patcher.exe") +
+    (Get-ChildItem $stage -Filter *.ps1 | ForEach-Object FullName)
+$signed = Invoke-CodeSign -Path $toSign
+Set-Content (Join-Path $stage 'SIGNED.txt') $(if ($signed) { 'signed' } else { 'unsigned' }) -Encoding ascii
+
 Compress-Archive -Path $stage -DestinationPath $zip
-Write-Host "Created $zip ($([math]::Round((Get-Item $zip).Length / 1MB, 1)) MB)"
+Write-Host "Created $zip ($([math]::Round((Get-Item $zip).Length / 1MB, 1)) MB), $(if ($signed) { 'SIGNED' } else { 'UNSIGNED' })"

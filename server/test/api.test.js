@@ -507,6 +507,20 @@ test('sync: presence, status, and a cursor that delivers each message once', asy
 
   await fails(400, 'invalid_cursor', member, 'POST', '/sync', { since: 'yesterday' });
   await fails(400, 'invalid_status', member, 'POST', '/sync', { status: { skill: 'x', level: -1 } });
+
+  // Combat state rides along with the status, is range-checked, and is cleared by a status without it.
+  const fight = { entity: 'MelvorBase:Combat', target: 'MelvorBase:Chicken', area: 'MelvorBase:Farmlands', name: 'Chicken' };
+  await ok(member, 'POST', '/sync', { status: { skill: 'Combat', level: 0, action: fight, combat: { hp: 500, maxHp: 300, dps: 42, level: 17, interval: 2400, hit: 79 } } });
+  view = await ok(owner, 'GET', `/guilds/${guild.id}`);
+  const fighter = view.members.find((x) => x.id === member.id).status;
+  assert.deepEqual(fighter.combat, { hp: 300, maxHp: 300, dps: 42, level: 17, interval: 2400, hit: 79 }); // hp clamped to maxHp
+  assert.equal(fighter.action.area, 'MelvorBase:Farmlands');
+  await ok(member, 'POST', '/sync', { status: { skill: 'Combat', level: 0, action: fight } });
+  view = await ok(owner, 'GET', `/guilds/${guild.id}`);
+  assert.equal(view.members.find((x) => x.id === member.id).status.combat, undefined);
+  for (const combat of [{ hp: 1, maxHp: 0, dps: 1, level: 1 }, { hp: 1, maxHp: 10, dps: -1, level: 1 }, { hp: 1, maxHp: 10, dps: 1.5, level: 1 }, { hp: 1, maxHp: 10, dps: 1 }, { hp: 1, maxHp: 10, dps: 1, level: 1, interval: 5 }, { hp: 1, maxHp: 10, dps: 1, level: 1, hit: 0 }, 'strong']) {
+    await fails(400, 'invalid_status', member, 'POST', '/sync', { status: { skill: 'Combat', level: 0, combat } });
+  }
   await fails(401, 'unauthorized', { id: member.id, key: newKey() }, 'POST', '/sync', {});
   await fails(401, 'unauthorized', null, 'POST', '/sync', {});
 });

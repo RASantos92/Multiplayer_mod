@@ -2,10 +2,12 @@ using System.Collections;
 using System.Reflection;
 using GamesByMalcs.Melvor2;
 using GamesByMalcs.Melvor2.Components.Actions;
+using GamesByMalcs.Melvor2.Components.CombatAreas;
 using GamesByMalcs.Melvor2.Components.Experience;
 using GamesByMalcs.Melvor2.Conditions;
 using GamesByMalcs.Melvor2.Data;
 using GamesByMalcs.Melvor2.Entities;
+using GamesByMalcs.Melvor2.Entities.Combat;
 using GamesByMalcs.Melvor2.Entities.Fishing;
 using GamesByMalcs.Melvor2.Entities.Mining;
 using GamesByMalcs.Melvor2.Entities.Thieving;
@@ -41,11 +43,13 @@ internal readonly record struct JoinCheck(JoinState State, string Reason);
 /// </summary>
 internal static class ActionJoiner
 {
-    public static JoinCheck Check(Game game, string entityId, string targetId) => Resolve(game, entityId, targetId, out _);
+    /// <param name="areaId">For combat: the area the enemy is fought in, when the other player sent one.</param>
+    public static JoinCheck Check(Game game, string entityId, string targetId, string areaId = "") =>
+        Resolve(game, entityId, targetId, areaId, out _);
 
-    public static JoinCheck Join(Game game, string entityId, string targetId)
+    public static JoinCheck Join(Game game, string entityId, string targetId, string areaId = "")
     {
-        JoinCheck check = Resolve(game, entityId, targetId, out Action? start);
+        JoinCheck check = Resolve(game, entityId, targetId, areaId, out Action? start);
         if (check.State != JoinState.Ready || start == null) return check;
         try
         {
@@ -59,7 +63,7 @@ internal static class ActionJoiner
         }
     }
 
-    private static JoinCheck Resolve(Game game, string entityId, string targetId, out Action? start)
+    private static JoinCheck Resolve(Game game, string entityId, string targetId, string areaId, out Action? start)
     {
         start = null;
         if (!game.Entities.TryGetObjectById(entityId, out GameEntity? entity) || entity == null)
@@ -75,6 +79,8 @@ internal static class ActionJoiner
 
         switch (entity)
         {
+            case CombatEntity combat:
+                return ResolveCombat(combat, targetId, areaId, out start);
             case FishingEntity fishing:
             {
                 var pair = Find(fishing.Action.Recipes, targetId);
@@ -119,6 +125,49 @@ internal static class ActionJoiner
         }
 
         return ResolveCrafting(entity, targetId, out start);
+    }
+
+    /// <summary>
+    /// Combat: the target is a dungeon, or an enemy inside a normal area. Selecting either starts the fight
+    /// (and swaps straight to it when already fighting something else). The game's select methods check
+    /// nothing, so the area's and the enemy's own unlock rules are checked here, as the game's menu does.
+    /// </summary>
+    private static JoinCheck ResolveCombat(CombatEntity combat, string targetId, string areaId, out Action? start)
+    {
+        start = null;
+        CombatAreasComponent areas = combat.Areas;
+
+        foreach (BaseCombatArea area in areas.ActiveAreas.Keys)
+        {
+            if (area is not Dungeon dungeon || dungeon.Id != targetId) continue;
+            JoinCheck locked = Unlocked(dungeon.UnlockRequirements, dungeon.DisplayRequirements);
+            if (locked.State != JoinState.Ready) return locked;
+            start = () => areas.SelectDungeon(dungeon);
+            return Ok();
+        }
+
+        // Prefer the area the other player is in; an enemy can appear in more than one.
+        foreach (bool exactArea in new[] { true, false })
+        {
+            foreach (BaseCombatArea area in areas.ActiveAreas.Keys)
+            {
+                if (area is not CombatArea normal || exactArea != (normal.Id == areaId)) continue;
+                Enemy? enemy = normal.Enemies.FirstOrDefault(e => e.Id == targetId);
+                if (enemy == null) continue;
+
+                JoinCheck locked = Unlocked(normal.UnlockRequirements, normal.DisplayRequirements, enemy.Requirements, enemy.DisplayRequirements);
+                if (locked.State != JoinState.Ready)
+                {
+                    if (exactArea) return locked;
+                    continue;
+                }
+                start = () => areas.SelectEnemy(normal, enemy);
+                return Ok();
+            }
+        }
+
+        bool exists = areas.ActiveAreas.Keys.OfType<CombatArea>().Any(a => a.Enemies.Any(e => e.Id == targetId));
+        return exists ? new JoinCheck(JoinState.Locked, "You have not unlocked this enemy yet.") : Missing();
     }
 
     /// <summary>
@@ -211,19 +260,29 @@ internal static class ActionJoiner
             foreach (string property in new[] { "Requirements", "DisplayRequirements" })
             {
                 if (holder.GetType().GetProperty(property, BindingFlags.Instance | BindingFlags.Public)?.GetValue(holder) is not ConditionGroup group) continue;
-                if (group.AreMet) continue;
-
-                foreach (Condition condition in group.Conditions)
-                {
-                    if (condition.IsMet) continue;
-                    if (condition is LevelCondition level)
-                    {
-                        string skill = level.Component?.Entity?.DisplayName.Text ?? "skill";
-                        return new JoinCheck(JoinState.Locked, "Requires " + skill + " level " + level.Level + ".");
-                    }
-                }
-                return new JoinCheck(JoinState.Locked, "You have not unlocked this yet.");
+                JoinCheck locked = Unlocked(group);
+                if (locked.State != JoinState.Ready) return locked;
             }
+        }
+        return Ok();
+    }
+
+    /// <summary>Ready when every group is met; otherwise Locked, naming the missing level where there is one.</summary>
+    private static JoinCheck Unlocked(params ConditionGroup?[] groups)
+    {
+        foreach (ConditionGroup? group in groups)
+        {
+            if (group == null || group.AreMet) continue;
+            foreach (Condition condition in group.Conditions)
+            {
+                if (condition.IsMet) continue;
+                if (condition is LevelCondition level)
+                {
+                    string skill = level.Component?.Entity?.DisplayName.Text ?? "skill";
+                    return new JoinCheck(JoinState.Locked, "Requires " + skill + " level " + level.Level + ".");
+                }
+            }
+            return new JoinCheck(JoinState.Locked, "You have not unlocked this yet.");
         }
         return Ok();
     }
