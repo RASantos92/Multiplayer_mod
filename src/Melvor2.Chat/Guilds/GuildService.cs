@@ -36,26 +36,48 @@ internal sealed record SearchHit(string Id, string Name, string Description, lon
 
 /// <summary>
 /// The player's guild state and every guild action, backed by the guild server. Nothing is sent until the
-/// player enables guilds. While enabled it polls /sync: every few seconds when a guild screen or the chat is
-/// open, slowly otherwise.
+/// player enables guilds. While enabled it polls /sync, as rarely as it can get away with, because every call
+/// costs the person running the server:
+///   - every 3 s while a guild screen or guild chat is open and the player is at the keyboard;
+///   - every 8 s while sharing a fight, every 15 s while sharing a skill (the bonuses run on leases);
+///   - every 15 s for two minutes after my action changes, so a new party forms quickly, and while a guild
+///     screen is open but the player has been away for a few minutes;
+///   - once a minute otherwise.
 /// </summary>
 internal sealed class GuildService
 {
     private const double FastSync = 3;
-    private const double PartySync = 10;
-    private const double CombatSync = 5;
+    private const double PartySync = 15;
+    private const double CombatSync = 8;
+
+    /// <summary>With a guild screen open, how long without input before syncing drops to the party rate.</summary>
+    private const double AwaySeconds = 180;
+
+    /// <summary>With a guild screen open, how long without input before syncing drops to the slow rate.</summary>
+    private const double GoneSeconds = 900;
+
+    /// <summary>After my action changes, sync at the party rate for this long to find partners quickly.</summary>
+    private const double SeekSeconds = 120;
 
     /// <summary>At most this many guild mates count towards a party.</summary>
     public const int MaxPartners = 4;
-    private const double SlowSync = 20;
+    private const double SlowSync = 60;
     private const double ProfileUploadGap = 60;
     private const int MaxLinesPerGuild = 200;
-    public const long OnlineWindowMs = 60_000;
+
+    /// <summary>
+    /// A member seen this recently counts as online. It has to cover two slow syncs of theirs plus some slack,
+    /// or idle members would flicker offline.
+    /// </summary>
+    public const long OnlineWindowMs = 150_000;
 
     private Identity? _identity;
     private string _steamId = "";
     private string? _cursor;
     private double _sinceSync = SlowSync;
+    private double _seeking;
+    private string _lastActionKey = "";
+    private bool _syncSoon;
     private bool _syncing;
     private string _signature = "";
     private readonly HashSet<string> _seenMessages = new();
@@ -102,6 +124,9 @@ internal sealed class GuildService
 
     /// <summary>Set by the UI: true while the guild window or a guild chat channel is on screen.</summary>
     public bool Active { get; set; }
+
+    /// <summary>Set by the mod: seconds since the player last moved the mouse or pressed anything.</summary>
+    public double SinceInput { get; set; }
 
     /// <summary>Guild list, members, invites or requests changed.</summary>
     public event Action? Changed;
@@ -150,8 +175,37 @@ internal sealed class GuildService
         if (!Enabled) return;
         _sinceSync += delta;
         _sinceProfileUpload += delta;
-        double interval = Active ? FastSync : CombatParty ? CombatSync : Party ? PartySync : SlowSync;
+        if (_seeking > 0) _seeking -= delta;
+
+        // Starting, stopping or switching an action: tell the guild now and look for partners for a while.
+        string actionKey = "";
+        try
+        {
+            actionKey = Activity?.Invoke()?.Key ?? "";
+        }
+        catch (Exception)
+        {
+            // The sync itself reports problems reading the activity.
+        }
+        if (actionKey != _lastActionKey)
+        {
+            _lastActionKey = actionKey;
+            _seeking = SeekSeconds;
+            _syncSoon = true;
+        }
+
+        double interval = SyncInterval();
+        // "Soon" still waits out the fast interval, so flicking between actions cannot flood the server.
+        if (_syncSoon) interval = Math.Min(interval, FastSync);
         if (!_syncing && _sinceSync >= interval) Sync();
+    }
+
+    private double SyncInterval()
+    {
+        if (Active && SinceInput < AwaySeconds) return FastSync;
+        if (CombatParty) return CombatSync;
+        if (Party || _seeking > 0 || (Active && SinceInput < GoneSeconds)) return PartySync;
+        return SlowSync;
     }
 
     /// <summary>The online guild mates doing exactly this action (each once, at most MaxPartners).</summary>
@@ -434,6 +488,7 @@ internal sealed class GuildService
         if (_syncing || !Enabled) return;
         _syncing = true;
         _sinceSync = 0;
+        _syncSoon = false;
 
         ActivityInfo? activity = null;
         CombatInfo? combat = null;

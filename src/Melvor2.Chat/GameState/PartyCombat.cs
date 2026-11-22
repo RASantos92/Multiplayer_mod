@@ -40,7 +40,7 @@ internal sealed class PartyCombat
     public const int LevelWindow = 10;
     public const double NearShare = 0.15;
     public const double FarShare = 0.08;
-    private const double LeaseSeconds = 30;
+    private const double LeaseSeconds = 45;
 
     /// <summary>A member whose last report is older than this adds nothing.</summary>
     private const long StaleMs = 20_000;

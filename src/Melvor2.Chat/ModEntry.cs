@@ -11,7 +11,7 @@ namespace Melvor2.Chat;
 /// <summary>Found and called by Melvor2.ModLoader.</summary>
 public static class ModEntry
 {
-    public const string Version = "0.5.1";
+    public const string Version = "0.5.2";
 
     private static SceneTree? s_tree;
     private static ChatPanel? s_panel;
@@ -24,6 +24,8 @@ public static class ModEntry
     private static double s_sinceMarket;
     private static double s_sinceGameWork;
     private static double s_sinceProfile = 60;
+    private static double s_sinceInput;
+    private static Vector2 s_lastMouse;
 
     /// <summary>The party XP bonus (one per game session).</summary>
     internal static PartyBoost Boost { get; } = new();
@@ -146,6 +148,12 @@ public static class ModEntry
             GuildApi.Pump();
             if (s_guilds != null)
             {
+                // Anyone at the keyboard? A guild screen left open overnight should not keep syncing fast.
+                Vector2 mouse = s_tree.Root.GetMousePosition();
+                if (mouse != s_lastMouse || Input.IsAnythingPressed()) s_sinceInput = 0;
+                else s_sinceInput += delta;
+                s_lastMouse = mouse;
+                s_guilds.SinceInput = s_sinceInput;
                 s_guilds.Active = s_panel.ShowingGuildChannel || (s_hook?.GuildWindowOpen ?? false);
                 s_guilds.Tick(delta);
                 GameWork(delta);

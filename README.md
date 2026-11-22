@@ -58,7 +58,7 @@ In the Members tab, what an online member is doing shows as a button.
 - If you can't join, the button is greyed out and hovering it says why, for example "Requires Fishing level 73".
 - Joining by button works for Combat, Fishing, Woodcutting, Mining, Thieving, Cooking, Firemaking, Herblore and the smithing-style skills. For anything else, start the same action yourself and the bonus still applies.
 - The bonus adds to your other XP bonuses the same way the game's own bonuses do, and it only applies while you are both online. It never applies to offline progress.
-- It takes up to about 20 seconds to notice a partner, and ends at once when you stop.
+- It takes up to about a minute to notice a partner, and ends at once when you stop. After a partner stops or goes offline, it can take a couple of minutes for your bonus to end.
 
 **Fight together**
 
@@ -166,7 +166,7 @@ Uninstalling does not remove you from your guilds. To erase your guild data from
 | No Guild button or chat icon in the game | Load a save first; they only show in game. If still missing, run the install line again. Game updates remove the mod. |
 | Friends chat invite does nothing | Use **Copy ID** and `/join` as described above. |
 | A member's profile says they have not shared one | They are on an older version. They need to run the install line again. |
-| No party bonus | You both need the latest version, both online, on the exact same action. Give it 20 seconds. |
+| No party bonus | You both need the latest version, both online, on the exact same action. Give it a minute. |
 | "Could not reach the guild server" | Check your internet connection and try again in a minute. Friends chat still works without the server. |
 | Cannot invite a friend to the guild | They need the mod installed and **Enable Guilds** clicked once. |
 | "This Steam account already enabled guilds on another PC" | Your guild key lives on the PC where you first enabled guilds. Ask the person who shared this mod to reset your guild account, then click **Enable Guilds** again. You keep your guilds. |

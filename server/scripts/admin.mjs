@@ -1,5 +1,6 @@
 // Admin tool for the person running the guild server.
 //
+//   node scripts/admin.mjs count                              how many players there are, and if new ones can join
 //   node scripts/admin.mjs find <part of a name | Steam ID>   look a player up: Steam ID, guilds, banned or not
 //   node scripts/admin.mjs ban <steamId>                      lock a player out (see below)
 //   node scripts/admin.mjs unban <steamId>
@@ -32,6 +33,7 @@ const value = rest.join(' ').trim();
 const isSteamId = /^\d{17}$/.test(value);
 
 const commands = {
+  count: { path: 'stats', body: {}, ok: true },
   find: { path: 'find-player', body: { q: value }, ok: value.length >= 2 },
   ban: { path: 'ban', body: { steamId: value }, ok: isSteamId },
   unban: { path: 'unban', body: { steamId: value }, ok: isSteamId },
@@ -42,6 +44,7 @@ const chosen = commands[command];
 if (!chosen?.ok) {
   console.error([
     'Usage:',
+    '  node scripts/admin.mjs count',
     '  node scripts/admin.mjs find <part of a name | Steam ID>',
     '  node scripts/admin.mjs ban <17-digit Steam ID>',
     '  node scripts/admin.mjs unban <17-digit Steam ID>',
@@ -76,6 +79,19 @@ if (!res.ok) {
 
 const who = body.player ? `"${body.player.name}" (${body.player.id})` : '';
 switch (command) {
+  case 'count': {
+    const cap = body.maxPlayers ? ` of ${body.maxPlayers}` : '';
+    console.log(`Players: ${body.players}${cap}${body.banned ? ` (plus ${body.banned} banned)` : ''}, in ${body.guilds} guilds`);
+    console.log(`Online in the last 5 minutes: ${body.online}.  Played in the last day: ${body.day}.  In the last week: ${body.week}.`);
+    console.log({
+      full: 'New players: CLOSED. The player limit (MAX_PLAYERS) is reached.',
+      code: body.maxPlayers
+        ? `New players: need the tester code, until ${body.maxPlayers} have joined.`
+        : 'New players: need the tester code. There is no player limit (MAX_PLAYERS is not set).',
+      open: 'New players: ANYONE can join. No tester code (REGISTER_CODE) is set.',
+    }[body.registration]);
+    break;
+  }
   case 'find':
     if (!body.players.length) console.log('No players found.');
     for (const p of body.players) {
