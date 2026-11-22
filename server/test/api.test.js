@@ -1053,3 +1053,38 @@ test('admin ban: locks the player out, removes what others see of them, and can 
   // The items from the closed listing are waiting for them.
   assert.deepEqual((await ok(member, 'POST', '/sync', {}, f)).claims.map((c) => [c.kind, c.qty]), [['return', 5]]);
 });
+
+test('player limit: no new players once it is reached; known players and admin count are unaffected', async () => {
+  const cfg = { adminKey: 'admin-secret-for-tests', registerCode: 'code' };
+  const limits = { rate: { register: [10_000, 3_600_000] } };
+  const adm = (fetcher) => ({ fetcher, headers: { 'x-admin-key': 'admin-secret-for-tests' } });
+  const open = makeFetch(limits, cfg);
+  const before = await ok(null, 'POST', '/admin/stats', {}, adm(open));
+  assert.deepEqual([before.maxPlayers, before.registration], [null, 'code']);
+  assert.equal((await ok(null, 'POST', '/admin/stats', {}, adm(makeFetch(limits, { adminKey: cfg.adminKey })))).registration, 'open');
+  await fails(401, 'unauthorized', null, 'POST', '/admin/stats', {}, { fetcher: open });
+
+  // Room for exactly one more player.
+  const capped = makeFetch(limits, { ...cfg, maxPlayers: String(before.players + 1) });
+  const a = { id: newSteamId(), key: newKey() };
+  const b = { id: newSteamId(), key: newKey() };
+  const reg = (p) => ({ steamId: p.id, name: 'Capped', key: p.key, code: 'code' });
+  assert.equal((await call(null, 'POST', '/register', reg(a), { fetcher: capped })).status, 201);
+  await fails(403, 'server_full', null, 'POST', '/register', reg(b), { fetcher: capped });
+  // Without the code they are told about the code, not about the limit.
+  await fails(403, 'code_required', null, 'POST', '/register', { ...reg(b), code: undefined }, { fetcher: capped });
+  // Players who already joined carry on.
+  assert.equal((await call(null, 'POST', '/register', reg(a), { fetcher: capped })).status, 200);
+  await ok(a, 'POST', '/sync', {}, { fetcher: capped });
+
+  const full = await ok(null, 'POST', '/admin/stats', {}, adm(capped));
+  assert.deepEqual([full.players, full.maxPlayers, full.registration], [before.players + 1, before.players + 1, 'full']);
+  assert.ok(full.online >= 1 && full.day >= full.online && full.week >= full.day);
+
+  // A banned player frees their place.
+  await ok(null, 'POST', '/admin/ban', { steamId: a.id }, adm(capped));
+  assert.equal((await ok(null, 'POST', '/admin/stats', {}, adm(capped))).registration, 'code');
+  assert.equal((await call(null, 'POST', '/register', reg(b), { fetcher: capped })).status, 201);
+  // A value that is not a whole number means no limit.
+  assert.equal((await ok(null, 'POST', '/admin/stats', {}, adm(makeFetch(limits, { ...cfg, maxPlayers: 'lots' })))).maxPlayers, null);
+});

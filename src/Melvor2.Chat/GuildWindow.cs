@@ -600,7 +600,7 @@ internal sealed partial class GuildWindow
             return;
         }
         JoinCheck result = ActionJoiner.Join(game, entityId, targetId, areaId);
-        OnNotice(result.State == JoinState.Ready ? "Joined. The party bonus starts within a few seconds." : result.Reason);
+        OnNotice(result.State == JoinState.Ready ? "Joined. Your party bonus starts within a few seconds; theirs within about a minute." : result.Reason);
         Rebuild();
     }
 

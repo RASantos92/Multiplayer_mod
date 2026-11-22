@@ -258,14 +258,17 @@ const parseCodes = (v) => String(v ?? '').split(',').map((c) => c.trim().toLower
 
 /**
  * @param {object} o
- * @param {{registerCode?: string, adminKey?: string}} [o.config]
+ * @param {{registerCode?: string, adminKey?: string, maxPlayers?: string|number}} [o.config]
  *   registerCode: when set, a new player must send one of these (comma separated) codes to register.
+ *   maxPlayers: when set to a whole number above 0, no new player can register once that many
+ *     (not counting banned ones) have.
  *   adminKey: when set, turns on the admin endpoints, which need it in the X-Admin-Key header.
  */
 export function createApp({ store, limits = {}, now = () => Date.now(), config = {} }) {
   const L = { ...DEFAULT_LIMITS, ...limits, rate: { ...DEFAULT_LIMITS.rate, ...limits.rate } };
   const registerCodes = parseCodes(config.registerCode);
   const adminKeyHash = config.adminKey ? sha256(String(config.adminKey)) : null;
+  const maxPlayers = /^\d{1,9}$/.test(String(config.maxPlayers ?? '').trim()) ? Number(config.maxPlayers) : 0;
 
   // Requests with a bad key cost a database read each, so an address that keeps sending them is cut off
   // before that read. Kept in memory: it only has to hold back a flood on a warm instance.
@@ -375,6 +378,9 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       let existing = await store.getPlayer(steamId);
       if (!existing) {
         checkRegisterCode(body.code);
+        if (maxPlayers > 0 && (await store.countPlayers({ banned: { $ne: true } })) >= maxPlayers) {
+          throw new HttpError(403, 'server_full', 'This test is full: no new players are being added right now.');
+        }
         const t = new Date(now());
         if (await store.insertPlayer({ _id: steamId, name, keyHash, createdAt: t, lastSeen: t, status: null })) return out(true);
         existing = await store.getPlayer(steamId); // lost a race with another register
@@ -563,6 +569,23 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       await store.deleteGuild(guild._id);
       await store.purgeGuildChildren(guild._id, { withMessages: false });
       return { ok: true, guild: { id: String(guild._id), name: guild.name, ownerId: guild.ownerId } };
+    },
+
+    // How many players there are and how recently they were seen, and whether new ones can still register.
+    async adminStats(ctx) {
+      await adminAuth(ctx);
+      const t = now();
+      const since = (msAgo) => store.countPlayers({ banned: { $ne: true }, lastSeen: { $gte: new Date(t - msAgo) } });
+      const [players, banned, online, day, week, guilds] = await Promise.all([
+        store.countPlayers({ banned: { $ne: true } }),
+        store.countPlayers({ banned: true }),
+        since(5 * 60_000),
+        since(24 * 60 * 60_000),
+        since(7 * 24 * 60 * 60_000),
+        store.countGuilds(),
+      ]);
+      const registration = maxPlayers > 0 && players >= maxPlayers ? 'full' : registerCodes.length ? 'code' : 'open';
+      return { players, banned, online, day, week, guilds, maxPlayers: maxPlayers || null, registration };
     },
 
     // Finds players by part of their name, or one player by Steam ID, with the guilds they are in.
@@ -801,6 +824,7 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
     ['POST', 'admin/unban', h.adminUnban, { auth: false }],
     ['POST', 'admin/delete-guild', h.adminDeleteGuild, { auth: false }],
     ['POST', 'admin/find-player', h.adminFindPlayer, { auth: false }],
+    ['POST', 'admin/stats', h.adminStats, { auth: false }],
     ['GET', 'me', h.me],
     ['DELETE', 'me', h.deleteMe],
     ['PUT', 'me/profile', h.putProfile],

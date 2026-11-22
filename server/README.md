@@ -26,6 +26,7 @@ You need a MongoDB Atlas cluster and its connection string (`mongodb+srv://...`)
    - Key `MONGODB_URI`, value: your Atlas connection string with the real password in place of `<db_password>`. Tick **Production** (and Preview if you want preview deploys to work).
    - Optional: key `MONGODB_DB` to change the database name. The default is `melvor2guilds`.
    - Recommended: key `REGISTER_CODE`, a tester code you make up (letters, digits, dashes; upper and lower case are treated the same). While it is set, only people who type it into the mod can enable guilds for the first time. Hand it out privately, not in a public channel. Several codes can be given separated by commas; to retire a code, remove it and deploy again. Players who already enabled guilds are not affected. Without it, anyone can register.
+   - Optional: key `MAX_PLAYERS`, a whole number such as `30`. Once that many players have registered (banned ones are not counted), nobody new can register, even with the code. Raise the number and deploy again to let more in.
    - Recommended: key `ADMIN_KEY`, a long random value (40 or more characters, from a password generator). It turns on the admin tool below. Treat it like a password and tick **Sensitive**.
 4. In MongoDB Atlas, open **Network Access** (under Security), click **Add IP Address**, choose **Allow access from anywhere** (`0.0.0.0/0`) and confirm. Vercel functions have no fixed IP addresses, so the database password is what protects the cluster. Use a long generated one.
 5. Deploy:
@@ -54,6 +55,7 @@ If every path answers with the health JSON, or with 404, the rewrite in `vercel.
 With `ADMIN_KEY` set, `scripts/admin.mjs` lets you deal with problems. It asks for the admin key each time, or reads it from the `MELVOR2_ADMIN_KEY` environment variable.
 
 ```powershell
+node scripts/admin.mjs count
 node scripts/admin.mjs find "part of a name"
 node scripts/admin.mjs ban 7656119xxxxxxxxxx
 node scripts/admin.mjs unban 7656119xxxxxxxxxx
@@ -61,6 +63,7 @@ node scripts/admin.mjs delete-guild "Guild name"
 node scripts/admin.mjs reset 7656119xxxxxxxxxx
 ```
 
+- **count** shows how many players have registered, how many were online in the last 5 minutes, day and week, and whether new players can still join (anyone, with the code, or closed because `MAX_PLAYERS` is reached).
 - **find** shows matching players with their Steam ID, their guilds and whether they are banned. Use it to get the Steam ID for the other commands. It also accepts a Steam ID.
 - **ban** locks that Steam account out of guilds. The player is removed from the guilds they are in, and their chat messages, marketplace listings, offers, requests and invites are removed. Guilds they own are left alone and listed so you can delete the ones that should go. Items they had listed wait for them and come back if you unban them. A ban does not stop the same person using a different Steam account.
 - **delete-guild** removes a guild the same way its owner disbanding it would: listed items go back to their sellers. It cannot be undone.
@@ -124,10 +127,11 @@ Requests with a missing or wrong key are counted per IP address; after 30 in a m
 | Method and path | Body | Result |
 | --- | --- | --- |
 | `GET /health` | | `{ok, service, protocol}`. Add `?db=1` to also ping the database. No headers needed. |
-| `POST /register` | `{steamId, name, key, code?}` | `201 {player: {id, name}, created: true}` for a new Steam ID. `200` with `created: false` if the same key is presented again (also updates the name), or when it sets a new key after an admin reset. `409 steam_id_claimed` for a different key. When the server has `REGISTER_CODE` set, a new Steam ID must send a matching `code`: `403 code_required` or `403 code_wrong` otherwise. |
+| `POST /register` | `{steamId, name, key, code?}` | `201 {player: {id, name}, created: true}` for a new Steam ID. `200` with `created: false` if the same key is presented again (also updates the name), or when it sets a new key after an admin reset. `409 steam_id_claimed` for a different key. When the server has `REGISTER_CODE` set, a new Steam ID must send a matching `code`: `403 code_required` or `403 code_wrong` otherwise. With `MAX_PLAYERS` set and reached, a new Steam ID gets `403 server_full`. |
 | `POST /admin/reset-player` | `{steamId}` | Needs the `X-Admin-Key` header (the server's `ADMIN_KEY`); `404` when no `ADMIN_KEY` is set. Forgets the player's key so their next register sets a new one. |
 | `POST /admin/ban`, `POST /admin/unban` | `{steamId}` | Same header. A banned player gets `403 banned` on every call, including `/register` and `/sync`. Banning also removes their memberships (except in guilds they own), messages, listings, offers, requests and invites; the reply lists `ownedGuilds`. |
 | `POST /admin/delete-guild` | `{name}` or `{id}` | Same header. Disbands the guild. |
+| `POST /admin/stats` | `{}` | Same header. `{players, banned, online, day, week, guilds, maxPlayers, registration}`; `registration` is `open`, `code` or `full`. |
 | `POST /admin/find-player` | `{q}` | Same header. `q` is 2 to 32 characters of a name, or a Steam ID. `{players: [{id, name, banned, lastSeen, guilds: [{id, name, rank}]}]}`, up to 20. |
 | `GET /me` | | `{player, guilds: [{id, name, description, ownerId, createdAt, rank}], invites: [{guildId, guildName, by, byName, at}], requests: [{guildId, guildName, at}], limits: {maxGuilds, maxMembers}}` |
 | `PUT /me/profile` | `{skills: [{id, level}], gear: [{slot, item, qty}]}` | `{ok: true, updatedAt}`. Replaces my whole profile. See Profiles below. |
@@ -137,7 +141,7 @@ Requests with a missing or wrong key are counted per IP address; after 30 in a m
 
 ### `POST /sync`
 
-Meant to be polled every 3 to 20 seconds. It sets my `lastSeen`, optionally my status and name, and returns everything the client needs to refresh.
+Meant to be polled every 3 to 60 seconds (the mod uses 3 s with a guild screen open, 8 to 15 s in a party, 60 s otherwise). It sets my `lastSeen`, optionally my status and name, and returns everything the client needs to refresh.
 
 Request:
 

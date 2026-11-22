@@ -86,6 +86,8 @@ export function createStore(db) {
     findPlayersByName: (q, limit) =>
       players.find({ name: { $regex: escapeRegex(q), $options: 'i' } }).sort({ lastSeen: -1 }).limit(limit).toArray(),
     deletePlayer: (id) => players.deleteOne({ _id: id }),
+    countPlayers: (filter = {}) => players.countDocuments(filter),
+    countGuilds: () => guilds.countDocuments({}),
     /** Admin: forget the player's key so their next register can set a new one. */
     resetPlayerKey: (id) => players.updateOne({ _id: id }, { $set: { keyHash: null } }),
     /** Sets a new key on a player whose key was reset. False if someone else got there first. */

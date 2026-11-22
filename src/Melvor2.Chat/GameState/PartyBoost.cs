@@ -25,7 +25,7 @@ namespace Melvor2.Chat.GameState;
 internal sealed class PartyBoost
 {
     public const double Percent = 0.05;
-    private const double LeaseSeconds = 30;
+    private const double LeaseSeconds = 45;
 
     private sealed class Source : INamedObject
     {
