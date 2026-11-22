@@ -105,7 +105,62 @@ function vStatus(v, nowMs) {
   if (len(skill) > 40) throw bad('invalid_status', 'status.skill must be at most 40 characters');
   const level = v.level ?? 0;
   if (!Number.isInteger(level) || level < 0 || level > 1_000_000) throw bad('invalid_status', 'status.level must be an integer from 0 to 1000000');
-  return { skill, level, at: new Date(nowMs) };
+  const status = { skill, level, at: new Date(nowMs) };
+  // Optional; a status sent without it clears the stored action.
+  if (v.action !== undefined && v.action !== null) status.action = vAction(v.action);
+  return status;
+}
+
+const GAME_ID_RE = /^[A-Z][A-Za-z0-9]*:[A-Z][A-Za-z0-9]*$/;
+const isGameId = (v) => typeof v === 'string' && v.length <= 80 && GAME_ID_RE.test(v);
+const isIntIn = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+function vAction(a) {
+  const fail = (m) => bad('invalid_status', `status.action${m}`);
+  if (!isObj(a)) throw fail(' must be an object');
+  for (const f of ['entity', 'target']) {
+    if (!isGameId(a[f])) throw fail(`.${f} must be a game id like "Namespace:LocalId" (at most 80 characters)`);
+  }
+  const out = { entity: a.entity, target: a.target };
+  if (a.area !== undefined && a.area !== null) {
+    if (!isGameId(a.area)) throw fail('.area must be a game id like "Namespace:LocalId" (at most 80 characters)');
+    out.area = a.area;
+  }
+  const name = typeof a.name === 'string' ? cleanText(a.name) : '';
+  if (len(name) < 1 || len(name) > 60) throw fail('.name must be 1 to 60 characters');
+  out.name = name;
+  return out;
+}
+
+export const PROFILE_LIMITS = { skills: 60, gear: 40, maxLevel: 1000, maxQty: 1_000_000_000 };
+
+function vProfile(body) {
+  const fail = (m) => bad('invalid_profile', m);
+  const list = (field, max) => {
+    const v = body[field] ?? [];
+    if (!Array.isArray(v)) throw fail(`${field} must be an array`);
+    if (v.length > max) throw fail(`${field} can have at most ${max} entries`);
+    return v;
+  };
+  const seenSkills = new Set();
+  const skills = list('skills', PROFILE_LIMITS.skills).map((s, i) => {
+    if (!isObj(s) || !isGameId(s.id)) throw fail(`skills[${i}].id must be a game id like "Namespace:LocalId"`);
+    if (!isIntIn(s.level, 0, PROFILE_LIMITS.maxLevel)) throw fail(`skills[${i}].level must be an integer from 0 to ${PROFILE_LIMITS.maxLevel}`);
+    if (seenSkills.has(s.id)) throw fail(`skills lists ${s.id} more than once`);
+    seenSkills.add(s.id);
+    return { id: s.id, level: s.level };
+  });
+  const seenSlots = new Set();
+  const gear = list('gear', PROFILE_LIMITS.gear).map((g, i) => {
+    if (!isObj(g) || !isGameId(g.slot)) throw fail(`gear[${i}].slot must be a game id like "Namespace:LocalId"`);
+    if (!isGameId(g.item)) throw fail(`gear[${i}].item must be a game id like "Namespace:LocalId"`);
+    if (!isIntIn(g.qty, 0, PROFILE_LIMITS.maxQty)) throw fail(`gear[${i}].qty must be an integer from 0 to ${PROFILE_LIMITS.maxQty}`);
+    if (seenSlots.has(g.slot)) throw fail(`gear lists slot ${g.slot} more than once`);
+    seenSlots.add(g.slot);
+    return { slot: g.slot, item: g.item, qty: g.qty };
+  });
+  return { skills, gear };
 }
 
 function vGuildId(v) {
@@ -144,7 +199,9 @@ const guildOut = (g, extra = {}) => ({
   createdAt: ms(g.createdAt),
   ...extra,
 });
-const statusOut = (s) => (s ? { skill: s.skill, level: s.level, at: ms(s.at) } : null);
+const statusOut = (s) =>
+  s ? { skill: s.skill, level: s.level, at: ms(s.at), ...(s.action ? { action: s.action } : {}) } : null;
+const profileOut = (p) => (p ? { skills: p.skills, gear: p.gear, updatedAt: ms(p.updatedAt) } : null);
 const messageOut = (m) => ({
   id: String(m._id),
   guildId: String(m.guildId),
@@ -261,6 +318,31 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
       await store.purgePlayerChildren(me);
       await store.deletePlayer(me);
       return { ok: true };
+    },
+
+    // Replaces my whole profile (skill levels and equipped gear).
+    async putProfile({ me, body }) {
+      const updatedAt = new Date(now());
+      await store.setProfile(me, { ...vProfile(body), updatedAt });
+      return { ok: true, updatedAt: ms(updatedAt) };
+    },
+
+    // Visible to the player themself and to anyone who shares a guild with them.
+    async getProfile({ me, player, params }) {
+      const id = vSteamId(params.id, 'player id');
+      let target = player;
+      if (id !== me) {
+        const [found, shared] = await Promise.all([store.getPlayer(id), store.shareGuild(me, id)]);
+        if (!found) throw notFound('player_not_found', 'No such player');
+        if (!shared) throw forbidden('You can only view players you share a guild with');
+        target = found;
+      }
+      return {
+        player: { id, name: target.name },
+        profile: profileOut(target.profile),
+        status: statusOut(target.status),
+        lastSeen: ms(target.lastSeen),
+      };
     },
 
     // Authenticates itself so the lastSeen/status update and the key check share one query.
@@ -545,6 +627,8 @@ export function createApp({ store, limits = {}, now = () => Date.now() }) {
     ['POST', 'sync', h.sync, { auth: false }], // does its own auth + rate limit
     ['GET', 'me', h.me],
     ['DELETE', 'me', h.deleteMe],
+    ['PUT', 'me/profile', h.putProfile],
+    ['GET', 'players/:id/profile', h.getProfile],
     ['POST', 'guilds', h.createGuild],
     ['GET', 'guilds/search', h.searchGuilds],
     ['GET', 'guilds/:id', h.getGuild],

@@ -2,6 +2,9 @@
 import { PROTOCOL } from './app.js';
 
 export const MAX_BODY_BYTES = 4096;
+export const MAX_PROFILE_BODY_BYTES = 16 * 1024;
+/** Profile uploads are the one route with a larger body cap. */
+const bodyLimit = (method, path) => (method === 'PUT' && path === 'me/profile' ? MAX_PROFILE_BODY_BYTES : MAX_BODY_BYTES);
 
 const json = (status, body) =>
   new Response(JSON.stringify(body), {
@@ -10,9 +13,9 @@ const json = (status, body) =>
   });
 const error = (status, code, message) => json(status, { error: { code, message } });
 
-/** Reads at most MAX_BODY_BYTES; returns null when the body is larger. */
-async function readBody(request) {
-  if (Number(request.headers.get('content-length')) > MAX_BODY_BYTES) return null;
+/** Reads at most `limit` bytes; returns null when the body is larger. */
+async function readBody(request, limit) {
+  if (Number(request.headers.get('content-length')) > limit) return null;
   if (!request.body) return '';
   const chunks = [];
   let size = 0;
@@ -21,7 +24,7 @@ async function readBody(request) {
     const { done, value } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (size > MAX_BODY_BYTES) {
+    if (size > limit) {
       await reader.cancel().catch(() => {});
       return null;
     }
@@ -62,8 +65,9 @@ export function createFetchHandler(getApp) {
 
       let body = {};
       if (method === 'POST' || method === 'PATCH' || method === 'PUT') {
-        const text = await readBody(request);
-        if (text === null) return error(413, 'body_too_large', `Request body must be at most ${MAX_BODY_BYTES} bytes`);
+        const limit = bodyLimit(method, path);
+        const text = await readBody(request, limit);
+        if (text === null) return error(413, 'body_too_large', `Request body must be at most ${limit} bytes`);
         if (text.trim() !== '') {
           try {
             body = JSON.parse(text);

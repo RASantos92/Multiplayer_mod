@@ -1,12 +1,26 @@
 using System.Text;
 using System.Text.Json;
+using Melvor2.Chat.GameState;
 using Steamworks;
 
 namespace Melvor2.Chat.Guilds;
 
 internal sealed record GuildInfo(string Id, string Name, string Description, string OwnerId, string Rank);
 
-internal sealed record MemberInfo(string Id, string Name, string Rank, long LastSeen, string Skill, long Level);
+/// <summary>ActionEntity / ActionTarget are game ids; empty when the member is idle or on an older mod.</summary>
+internal sealed record MemberInfo(string Id, string Name, string Rank, long LastSeen, string Skill, long Level,
+    string ActionEntity, string ActionTarget, string ActionName)
+{
+    public bool HasAction => ActionEntity.Length > 0 && ActionTarget.Length > 0;
+    public string ActionKey => ActionEntity + "|" + ActionTarget;
+}
+
+internal sealed record ProfileSkill(string Id, long Level);
+
+internal sealed record ProfileGear(string Slot, string Item, long Quantity);
+
+/// <summary>A guild mate's shared profile. Shared is false when they have not uploaded one (older mod).</summary>
+internal sealed record ProfileData(bool Shared, List<ProfileSkill> Skills, List<ProfileGear> Gear, long UpdatedAt);
 
 internal sealed record InviteInfo(string GuildId, string GuildName, string ByName);
 
@@ -24,7 +38,9 @@ internal sealed record SearchHit(string Id, string Name, string Description, lon
 internal sealed class GuildService
 {
     private const double FastSync = 3;
+    private const double PartySync = 10;
     private const double SlowSync = 20;
+    private const double ProfileUploadGap = 60;
     private const int MaxLinesPerGuild = 200;
     public const long OnlineWindowMs = 60_000;
 
@@ -35,11 +51,29 @@ internal sealed class GuildService
     private bool _syncing;
     private string _signature = "";
     private readonly HashSet<string> _seenMessages = new();
+    private Identity? _awaitingConsent;
+    private string _uploadedProfile = "";
+    private double _sinceProfileUpload = ProfileUploadGap;
 
     public bool SteamReady => _steamId.Length > 0;
     public bool Enabled => _identity != null;
     public bool Busy { get; private set; }
     public string SteamId => _steamId;
+
+    /// <summary>
+    /// True when this PC enabled guilds under an older notice. Nothing is sent until the player accepts the
+    /// current one (AcceptConsent).
+    /// </summary>
+    public bool NeedsConsent => _awaitingConsent != null && _identity == null;
+
+    /// <summary>Supplied by the mod: what the local character is doing right now, or null.</summary>
+    public Func<ActivityInfo?>? Activity { get; set; }
+
+    /// <summary>Set by the mod while a guild mate might be sharing my action, so presence stays fresh.</summary>
+    public bool Party { get; set; }
+
+    /// <summary>When the last successful sync finished (local clock, UTC).</summary>
+    public DateTime LastSyncUtc { get; private set; }
 
     /// <summary>Server clock from the last sync, for deciding who is online.</summary>
     public long ServerNow { get; private set; }
@@ -78,14 +112,87 @@ internal sealed class GuildService
         }
 
         Identity? saved = Identity.Load(_steamId);
-        if (saved != null) Register(saved, isNew: false);
+        if (saved == null) return;
+        if (saved.Consent >= Identity.CurrentConsent) Register(saved, isNew: false);
+        else _awaitingConsent = saved;
+    }
+
+    /// <summary>The player accepted the current notice after enabling under an older one.</summary>
+    public void AcceptConsent()
+    {
+        Identity? identity = _awaitingConsent;
+        if (identity == null || Busy) return;
+        identity.Consent = Identity.CurrentConsent;
+        identity.Save();
+        _awaitingConsent = null;
+        Register(identity, isNew: false);
     }
 
     public void Tick(double delta)
     {
         if (!Enabled) return;
         _sinceSync += delta;
-        if (!_syncing && _sinceSync >= (Active ? FastSync : SlowSync)) Sync();
+        _sinceProfileUpload += delta;
+        double interval = Active ? FastSync : Party ? PartySync : SlowSync;
+        if (!_syncing && _sinceSync >= interval) Sync();
+    }
+
+    /// <summary>The name of an online guild mate doing exactly this action, or null.</summary>
+    public string? FindPartner(string actionKey)
+    {
+        foreach (List<MemberInfo> members in Members.Values)
+        {
+            foreach (MemberInfo member in members)
+            {
+                if (member.Id != _steamId && member.HasAction && member.ActionKey == actionKey
+                    && ServerNow - member.LastSeen < OnlineWindowMs)
+                {
+                    return member.Name;
+                }
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Sends my profile JSON if it changed, at most once a minute.</summary>
+    public void OfferProfile(string json)
+    {
+        if (!Enabled || json == _uploadedProfile || _sinceProfileUpload < ProfileUploadGap) return;
+        _sinceProfileUpload = 0;
+        GuildApi.Send("PUT", "/me/profile", json, result =>
+        {
+            if (result.Ok) _uploadedProfile = json;
+            else if (result.Status != 0) ModEntry.Log("Profile upload refused: " + result.ErrorCode);
+        });
+    }
+
+    public void LoadProfile(string playerId, Action<ProfileData?> done)
+    {
+        if (!Enabled)
+        {
+            done(null);
+            return;
+        }
+        GuildApi.Get("/players/" + playerId + "/profile", result =>
+        {
+            if (!result.Ok)
+            {
+                // Servers before v0.3 have no profile route.
+                if (result.Status != 404) Notice?.Invoke(result.ErrorMessage);
+                done(null);
+                return;
+            }
+            JsonElement? profile = result.Body.Child("profile");
+            if (profile == null)
+            {
+                done(new ProfileData(false, new List<ProfileSkill>(), new List<ProfileGear>(), 0));
+                return;
+            }
+            done(new ProfileData(true,
+                profile.Value.Items("skills").Select(x => new ProfileSkill(x.Str("id"), x.Long("level"))).ToList(),
+                profile.Value.Items("gear").Select(x => new ProfileGear(x.Str("slot"), x.Str("item"), x.Long("qty"))).ToList(),
+                profile.Value.Long("updatedAt")));
+        });
     }
 
     public GuildInfo? Find(string? guildId) => guildId == null ? null : Guilds.FirstOrDefault(g => g.Id == guildId);
@@ -139,6 +246,7 @@ internal sealed class GuildService
         {
             Identity.Delete();
             _identity = null;
+            _uploadedProfile = "";
             GuildApi.Auth = null;
             Guilds.Clear();
             Invites.Clear();
@@ -301,16 +409,29 @@ internal sealed class GuildService
         _syncing = true;
         _sinceSync = 0;
 
-        (string skill, long level) = ReadActivity();
+        ActivityInfo? activity = null;
+        try
+        {
+            activity = Activity?.Invoke();
+        }
+        catch (Exception e)
+        {
+            ModEntry.Log("Could not read current activity: " + e.Message);
+        }
         string body = Json.Obj(w =>
         {
             if (_cursor != null) w.WriteString("since", _cursor);
             w.WriteString("name", SteamFriends.GetPersonaName());
-            if (skill.Length > 0)
+            if (activity != null)
             {
                 w.WriteStartObject("status");
-                w.WriteString("skill", skill);
-                w.WriteNumber("level", level);
+                w.WriteString("skill", activity.SkillName);
+                w.WriteNumber("level", activity.Level);
+                w.WriteStartObject("action");
+                w.WriteString("entity", activity.EntityId);
+                w.WriteString("target", activity.TargetId);
+                w.WriteString("name", activity.Name);
+                w.WriteEndObject();
                 w.WriteEndObject();
             }
             else
@@ -324,6 +445,7 @@ internal sealed class GuildService
             _syncing = false;
             if (!result.Ok) return;
 
+            LastSyncUtc = DateTime.UtcNow;
             ServerNow = result.Body.Long("now");
             string cursor = result.Body.Str("cursor");
             if (cursor.Length > 0) _cursor = cursor;
@@ -340,8 +462,10 @@ internal sealed class GuildService
                 Members[id] = g.Items("members").Select(m =>
                 {
                     JsonElement? status = m.Child("status");
+                    JsonElement? action = status?.Child("action");
                     return new MemberInfo(m.Str("id"), m.Str("name"), m.Str("rank"), m.Long("lastSeen"),
-                        status?.Str("skill") ?? "", status?.Long("level") ?? 0);
+                        status?.Str("skill") ?? "", status?.Long("level") ?? 0,
+                        action?.Str("entity") ?? "", action?.Str("target") ?? "", action?.Str("name") ?? "");
                 }).ToList();
             }
             if (seen.Count != Guilds.Count) membershipChanged = true;
@@ -375,24 +499,6 @@ internal sealed class GuildService
         MessageReceived?.Invoke(line);
     }
 
-    /// <summary>What the game itself reports to Steam for the local player, e.g. "Fishing" and 61.</summary>
-    private static (string Skill, long Level) ReadActivity()
-    {
-        try
-        {
-            CSteamID me = SteamUser.GetSteamID();
-            string skill = SteamFriends.GetFriendRichPresence(me, "active_entity") ?? "";
-            string levelText = SteamFriends.GetFriendRichPresence(me, "entity_level") ?? "";
-            if (skill.Length > 40) skill = skill.Substring(0, 40);
-            long.TryParse(levelText, out long level);
-            return (skill, Math.Clamp(level, 0, 1_000_000));
-        }
-        catch (Exception)
-        {
-            return ("", 0);
-        }
-    }
-
     /// <summary>Raises Changed only when something the UI shows is different, so lists are not rebuilt every poll.</summary>
     private void RaiseIfChanged()
     {
@@ -405,7 +511,7 @@ internal sealed class GuildService
                 foreach (MemberInfo m in members)
                 {
                     bool online = ServerNow - m.LastSeen < OnlineWindowMs;
-                    sb.Append(m.Id).Append(m.Name).Append(m.Rank).Append(online).Append(m.Skill).Append(m.Level).Append(',');
+                    sb.Append(m.Id).Append(m.Name).Append(m.Rank).Append(online).Append(m.Skill).Append(m.Level).Append(m.ActionTarget).Append(',');
                 }
             }
             if (JoinRequests.TryGetValue(g.Id, out List<PendingInfo>? requests)) sb.Append('R').AppendJoin(',', requests.Select(r => r.PlayerId + r.Name));

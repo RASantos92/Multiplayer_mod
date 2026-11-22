@@ -683,3 +683,248 @@ test('indexes exist, including the 14 day message expiry', async () => {
   assert.ok((await idx('members')).some((i) => i.unique && i.key.guildId === 1 && i.key.playerId === 1));
   assert.ok((await idx('requests')).some((i) => i.unique && i.key.guildId === 1 && i.key.playerId === 1));
 });
+
+// ---------- v0.3: current action and player profiles ----------
+
+const ACTION = { entity: 'Melvor:Woodcutting', target: 'Melvor:OakTree', name: 'Oak Tree' };
+const statusOf = async (viewer, guild, player) =>
+  (await ok(viewer, 'GET', `/guilds/${guild.id}`)).members.find((m) => m.id === player.id).status;
+
+test('sync: status.action is stored, returned to guild mates, and cleared', async () => {
+  const { owner, member, guild } = await trio();
+  const BEL = String.fromCharCode(7);
+
+  await ok(member, 'POST', '/sync', { status: { skill: 'Woodcutting', level: 42, action: { ...ACTION, name: `  Oak${BEL} Tree\n`, extra: 'dropped' } } });
+  const viaSync = (await ok(owner, 'POST', '/sync', {})).guilds[0].members.find((m) => m.id === member.id);
+  assert.deepEqual(viaSync.status.action, ACTION);
+  assert.equal(viaSync.status.skill, 'Woodcutting');
+  assert.deepEqual((await statusOf(owner, guild, member)).action, ACTION);
+
+  // Combat sends an area as well.
+  const combat = { entity: 'Melvor:Combat', target: 'Melvor:Cow', area: 'Melvor:Farmlands', name: 'Cow' };
+  await ok(member, 'POST', '/sync', { status: { skill: 'Combat', level: 3, action: combat } });
+  assert.deepEqual((await statusOf(owner, guild, member)).action, combat);
+
+  // Omitting status keeps it, including the action.
+  await ok(member, 'POST', '/sync', {});
+  assert.deepEqual((await statusOf(owner, guild, member)).action, combat);
+
+  // A status without action (what a v0.2.0 client sends) clears the action only.
+  await ok(member, 'POST', '/sync', { status: { skill: 'Combat', level: 3 } });
+  const cleared = await statusOf(owner, guild, member);
+  assert.equal('action' in cleared, false);
+  assert.equal(cleared.skill, 'Combat');
+
+  // action: null is the same as leaving it out; status: null clears everything.
+  await ok(member, 'POST', '/sync', { status: { skill: 'Combat', level: 3, action: ACTION } });
+  await ok(member, 'POST', '/sync', { status: { skill: 'Combat', level: 3, action: null } });
+  assert.equal('action' in (await statusOf(owner, guild, member)), false);
+  await ok(member, 'POST', '/sync', { status: { skill: 'x', level: 1, action: ACTION } });
+  await ok(member, 'POST', '/sync', { status: null });
+  assert.equal(await statusOf(owner, guild, member), null);
+
+  // Non-members still get no status at all.
+  await ok(member, 'POST', '/sync', { status: { skill: 'x', level: 1, action: ACTION } });
+  const outside = await ok(await newPlayer(), 'GET', `/guilds/${guild.id}`);
+  assert.ok(outside.members.every((m) => !('status' in m)));
+});
+
+test('sync: invalid status.action is refused and leaves the stored status alone', async () => {
+  const { owner, member, guild } = await trio();
+  await ok(member, 'POST', '/sync', { status: { skill: 'Fishing', level: 9, action: ACTION } });
+  const long = `Melvor:${'A'.repeat(74)}`; // 81 characters
+  const badActions = [
+    'Melvor:OakTree',
+    [ACTION],
+    {},
+    { ...ACTION, entity: undefined },
+    { ...ACTION, target: 5 },
+    { ...ACTION, entity: 'melvor:Woodcutting' },
+    { ...ACTION, entity: 'Melvor:oakTree' },
+    { ...ACTION, entity: 'Melvor' },
+    { ...ACTION, entity: 'Melvor:Oak:Tree' },
+    { ...ACTION, entity: 'Melvor:Oak_Tree' },
+    { ...ACTION, entity: 'Melvor:Oak Tree' },
+    { ...ACTION, target: long },
+    { ...ACTION, area: 'not an id' },
+    { ...ACTION, area: 7 },
+    { ...ACTION, name: '' },
+    { ...ACTION, name: undefined },
+    { ...ACTION, name: 'x'.repeat(61) },
+    { ...ACTION, name: String.fromCharCode(1, 2) },
+  ];
+  for (const action of badActions) {
+    await fails(400, 'invalid_status', member, 'POST', '/sync', { status: { skill: 'Fishing', level: 9, action } });
+  }
+  const kept = await statusOf(owner, guild, member);
+  assert.deepEqual([kept.skill, kept.action], ['Fishing', ACTION]);
+
+  // Boundaries that are allowed.
+  const edge = { entity: 'A:B', target: `Melvor:${'A'.repeat(73)}`, name: 'x'.repeat(60) };
+  await ok(member, 'POST', '/sync', { status: { skill: '', level: 0, action: edge } });
+  assert.deepEqual((await statusOf(owner, guild, member)).action, edge);
+});
+
+const SKILLS = [{ id: 'Melvor:Woodcutting', level: 42 }, { id: 'Melvor:Fishing', level: 0 }];
+const GEAR = [{ slot: 'Melvor:Weapon', item: 'Melvor:BronzeSword', qty: 1 }, { slot: 'Melvor:Quiver', item: 'Melvor:BronzeArrows', qty: 1_000_000_000 }];
+
+test('profile: upload, replace, and read my own', async () => {
+  const p = await newPlayer('Solo');
+  const empty = await ok(p, 'GET', `/players/${p.id}/profile`);
+  assert.deepEqual([empty.player, empty.profile, empty.status], [{ id: p.id, name: 'Solo' }, null, null]);
+  assert.equal(typeof empty.lastSeen, 'number');
+
+  const put = await ok(p, 'PUT', '/me/profile', { skills: SKILLS.map((s) => ({ ...s, junk: 1 })), gear: GEAR });
+  assert.equal(put.ok, true);
+  assert.equal(typeof put.updatedAt, 'number');
+  const got = await ok(p, 'GET', `/players/${p.id}/profile`);
+  assert.deepEqual(got.profile, { skills: SKILLS, gear: GEAR, updatedAt: put.updatedAt });
+
+  // PUT replaces the whole profile; missing lists become empty.
+  await ok(p, 'PUT', '/me/profile', { skills: [{ id: 'Melvor:Mining', level: 1000 }] });
+  const replaced = (await ok(p, 'GET', `/players/${p.id}/profile`)).profile;
+  assert.deepEqual([replaced.skills, replaced.gear], [[{ id: 'Melvor:Mining', level: 1000 }], []]);
+
+  // /me is unchanged for old clients: no profile in it.
+  assert.equal('profile' in (await ok(p, 'GET', '/me')).player, false);
+});
+
+test('profile: validation and limits', async () => {
+  const p = await newPlayer();
+  await ok(p, 'PUT', '/me/profile', { skills: SKILLS, gear: GEAR });
+  const skill = (i) => ({ id: `Melvor:Skill${i}`, level: i });
+  const gear = (i) => ({ slot: `Melvor:Slot${i}`, item: 'Melvor:Thing', qty: i });
+  const many = (n, f) => Array.from({ length: n }, (_, i) => f(i));
+  const badBodies = [
+    { skills: 'all of them' },
+    { gear: {} },
+    { skills: many(61, skill) },
+    { gear: many(41, gear) },
+    { skills: [null] },
+    { skills: ['Melvor:Woodcutting'] },
+    { skills: [{ id: 'woodcutting', level: 1 }] },
+    { skills: [{ id: `Melvor:${'A'.repeat(74)}`, level: 1 }] },
+    { skills: [{ id: 'Melvor:Woodcutting' }] },
+    { skills: [{ id: 'Melvor:Woodcutting', level: -1 }] },
+    { skills: [{ id: 'Melvor:Woodcutting', level: 1001 }] },
+    { skills: [{ id: 'Melvor:Woodcutting', level: 1.5 }] },
+    { skills: [{ id: 'Melvor:Woodcutting', level: '5' }] },
+    { skills: [{ id: 'Melvor:Woodcutting', level: 1 }, { id: 'Melvor:Woodcutting', level: 2 }] },
+    { gear: [{ slot: 'Melvor:Weapon', item: 'sword', qty: 1 }] },
+    { gear: [{ slot: 'weapon', item: 'Melvor:Sword', qty: 1 }] },
+    { gear: [{ slot: 'Melvor:Weapon', item: 'Melvor:Sword' }] },
+    { gear: [{ slot: 'Melvor:Weapon', item: 'Melvor:Sword', qty: -1 }] },
+    { gear: [{ slot: 'Melvor:Weapon', item: 'Melvor:Sword', qty: 1_000_000_001 }] },
+    { gear: [{ slot: 'Melvor:Weapon', item: 'Melvor:Sword', qty: 1 }, { slot: 'Melvor:Weapon', item: 'Melvor:Axe', qty: 1 }] },
+  ];
+  for (const body of badBodies) await fails(400, 'invalid_profile', p, 'PUT', '/me/profile', body);
+  // A refused upload leaves the stored profile alone.
+  assert.deepEqual((await ok(p, 'GET', `/players/${p.id}/profile`)).profile.skills, SKILLS);
+
+  // The maximum sizes are accepted, and the same item may sit in two slots.
+  await ok(p, 'PUT', '/me/profile', { skills: many(60, skill), gear: many(40, gear) });
+  const full = (await ok(p, 'GET', `/players/${p.id}/profile`)).profile;
+  assert.deepEqual([full.skills.length, full.gear.length], [60, 40]);
+  await ok(p, 'PUT', '/me/profile', {});
+
+  await fails(401, 'unauthorized', null, 'PUT', '/me/profile', {});
+  await fails(405, 'method_not_allowed', p, 'POST', '/me/profile', {});
+});
+
+test('profile: body cap is 16 KB on this route only', async () => {
+  const p = await newPlayer();
+  const pad = (n) => ({ skills: [], gear: [], pad: 'x'.repeat(n) });
+  await ok(p, 'PUT', '/me/profile', pad(15_000)); // over 4 KB, under 16 KB
+  const r = await fails(413, 'body_too_large', p, 'PUT', '/me/profile', pad(17_000));
+  assert.match(r.error.message, /16384/);
+  // Worst-case real payload fits: 60 skills and 40 gear rows with 80-character ids.
+  const id = (i) => `Melvor:${'A'.repeat(70)}${String(i).padStart(3, '0')}`;
+  const big = {
+    skills: Array.from({ length: 60 }, (_, i) => ({ id: id(i), level: 1000 })),
+    gear: Array.from({ length: 40 }, (_, i) => ({ slot: id(i), item: id(i), qty: 1_000_000_000 })),
+  };
+  assert.ok(JSON.stringify(big).length < 16 * 1024);
+  await ok(p, 'PUT', '/me/profile', big);
+  // Everything else keeps the 4 KB cap.
+  await fails(413, 'body_too_large', p, 'POST', '/sync', { pad: 'x'.repeat(5000) });
+  await fails(413, 'body_too_large', p, 'PUT', '/me', { pad: 'x'.repeat(5000) });
+});
+
+test('profile: visible to myself and guild mates only', async () => {
+  const { owner, officer, member, guild } = await trio();
+  const stranger = await newPlayer('Stranger');
+  await ok(member, 'PUT', '/me/profile', { skills: SKILLS, gear: GEAR });
+  await ok(member, 'POST', '/sync', { status: { skill: 'Woodcutting', level: 42, action: ACTION } });
+  const path = `/players/${member.id}/profile`;
+
+  for (const viewer of [member, owner, officer]) {
+    const v = await ok(viewer, 'GET', path);
+    assert.deepEqual(v.player, { id: member.id, name: 'Member' });
+    assert.deepEqual([v.profile.skills, v.profile.gear], [SKILLS, GEAR]);
+    assert.deepEqual(v.status.action, ACTION);
+    assert.ok(Math.abs(v.lastSeen - Date.now()) < 60_000);
+    assert.equal(JSON.stringify(v).includes('keyHash'), false);
+  }
+  // A guild mate with no profile yet reads as null.
+  assert.equal((await ok(member, 'GET', `/players/${owner.id}/profile`)).profile, null);
+
+  await fails(403, 'forbidden', stranger, 'GET', path);
+  await fails(403, 'forbidden', member, 'GET', `/players/${stranger.id}/profile`);
+  await fails(404, 'player_not_found', owner, 'GET', `/players/${newSteamId()}/profile`);
+  await fails(400, 'invalid_steam_id', owner, 'GET', '/players/abc/profile');
+  await fails(401, 'unauthorized', null, 'GET', path);
+
+  // A pending join request is not membership.
+  await ok(stranger, 'POST', `/guilds/${guild.id}/join`);
+  await fails(403, 'forbidden', stranger, 'GET', path);
+  await ok(owner, 'POST', `/guilds/${guild.id}/requests/${stranger.id}`, { accept: true });
+  await ok(stranger, 'GET', path);
+
+  // Leaving or being kicked ends access, in both directions.
+  await ok(officer, 'POST', `/guilds/${guild.id}/leave`);
+  await fails(403, 'forbidden', officer, 'GET', path);
+  await fails(403, 'forbidden', member, 'GET', `/players/${officer.id}/profile`);
+  await ok(owner, 'DELETE', `/guilds/${guild.id}/members/${stranger.id}`);
+  await fails(403, 'forbidden', stranger, 'GET', path);
+
+  // Sharing any one guild is enough.
+  const second = await newGuild(officer);
+  await addTo(second, officer, member);
+  await ok(officer, 'GET', path);
+
+  // Disbanding the only shared guild ends access too.
+  await ok(officer, 'DELETE', `/guilds/${second.id}`);
+  await fails(403, 'forbidden', officer, 'GET', path);
+});
+
+test('profile: uploads count against the write rate limit', async () => {
+  const fetcher = makeFetch({ rate: { write: [2, 60_000], register: [10_000, 3_600_000] } });
+  const p = await newPlayer();
+  await ok(p, 'PUT', '/me/profile', {}, { fetcher });
+  await ok(p, 'PUT', '/me/profile', {}, { fetcher });
+  await fails(429, 'rate_limited', p, 'PUT', '/me/profile', {}, { fetcher });
+});
+
+test('delete my data also removes the profile and action', async () => {
+  const { owner, member } = await trio();
+  const gear = [{ slot: 'Melvor:Weapon', item: 'Melvor:UniqueDeleteMarker', qty: 1 }];
+  const action = { ...ACTION, target: 'Melvor:UniqueDeleteMarker' };
+  await ok(member, 'PUT', '/me/profile', { skills: SKILLS, gear });
+  await ok(member, 'POST', '/sync', { status: { skill: 'Woodcutting', level: 42, action } });
+  assert.ok((await db.collection('players').findOne({ _id: member.id })).profile);
+
+  await ok(member, 'DELETE', '/me');
+  assert.equal(await db.collection('players').countDocuments({ _id: member.id }), 0);
+  await fails(404, 'player_not_found', owner, 'GET', `/players/${member.id}/profile`);
+  // Nothing of the profile or action is left anywhere in the database.
+  for (const { name } of await db.listCollections().toArray()) {
+    const docs = await db.collection(name).find({}).toArray();
+    assert.equal(JSON.stringify(docs).includes('UniqueDeleteMarker'), false, name);
+  }
+
+  // Registering the same Steam ID again starts with nothing.
+  const again = { id: member.id, key: newKey() };
+  await ok(null, 'POST', '/register', { steamId: again.id, name: 'Back', key: again.key });
+  const fresh = await ok(again, 'GET', `/players/${again.id}/profile`);
+  assert.deepEqual([fresh.profile, fresh.status], [null, null]);
+});

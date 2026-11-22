@@ -43,11 +43,28 @@ Load your save, then click **Guild** in the top bar (next to Guide).
 2. Open the **Owner** tab to invite Steam friends, approve join requests, promote members to officer, and change the guild's name or description.
 3. Friends need the mod installed with guilds enabled before you can invite them.
 
+**Profiles**
+
+Click a member's name in the **Members** tab to see their profile: what they are doing right now, all their skill levels, and their equipped gear. Click **< Back** to return.
+
+**Train together (+5% XP)**
+
+In the Members tab, what an online member is doing shows as a button.
+
+1. Click it. If your character meets the game's requirements, it starts the same action.
+2. While you and a guild mate are both online on the **exact same action** (same fishing spot, same tree, same ore, same recipe), you each get **+5% XP** in that skill.
+3. A green "Party bonus active" line appears in the Guild window, and the chat tells you when it starts and ends.
+
+- If you can't join, the button is greyed out and hovering it says why, for example "Requires Fishing level 73".
+- Joining by button works for Fishing, Woodcutting, Mining, Thieving, Cooking, Firemaking, Herblore and the smithing-style skills. For anything else, start the same action yourself and the bonus still applies. Combat does not get the bonus yet.
+- The bonus adds to your other XP bonuses the same way the game's own bonuses do, and it only applies while you are both online. It never applies to offline progress.
+- It takes up to about 20 seconds to notice a partner, and ends at once when you stop.
+
 **Who can do what**
 
 | | Member | Officer | Owner |
 | --- | --- | --- | --- |
-| Guild chat, see who is online and what they are training | Yes | Yes | Yes |
+| Guild chat, see who is online, view profiles, train together | Yes | Yes | Yes |
 | Invite people, approve join requests | | Yes | Yes |
 | Kick | | Members | Anyone |
 | Promote and demote, rename, hand over ownership, disband | | | Yes |
@@ -117,6 +134,8 @@ Uninstalling does not remove you from your guilds. To erase your guild data from
 | "Could not find Melvor Idle 2" | Install the game through Steam first. If it is installed, use the manual install below. |
 | No Guild button or chat icon in the game | Load a save first; they only show in game. If still missing, run the install line again. Game updates remove the mod. |
 | Friends chat invite does nothing | Use **Copy ID** and `/join` as described above. |
+| A member's profile says they have not shared one | They are on an older version. They need to run the install line again. |
+| No party bonus | You both need the latest version, both online, on the exact same action. Give it 20 seconds. |
 | "Could not reach the guild server" | Check your internet connection and try again in a minute. Friends chat still works without the server. |
 | Cannot invite a friend to the guild | They need the mod installed and **Enable Guilds** clicked once. |
 | "This Steam account already enabled guilds on another PC" | Your guild key lives on the PC where you first enabled guilds. Ask the person who shared this mod to reset it. |
@@ -130,6 +149,7 @@ Uninstalling does not remove you from your guilds. To erase your guild data from
 - **Friends chat is invite-only.** It uses a private Steam lobby that only people you invite can join.
 - **It does not touch your account.** The mod does not use the game's cloud login and does not read or send your save.
 - **Guilds are opt-in.** Nothing goes to the guild server until you click **Enable Guilds**.
+- **The party bonus is real XP.** It is a temporary bonus that is never written to your save, but the extra XP you earn with it stays on your character like any other XP.
 - **It is easy to undo.** The original game file is kept and the uninstall line puts it back.
 - **It is unofficial.** The game's developers do not support it, so use it at your own risk.
 
@@ -142,9 +162,12 @@ Once you click **Enable Guilds**, the mod sends:
 - your Steam ID and Steam display name
 - the guilds you create or join, and your rank in them
 - your guild chat messages (deleted after 14 days)
-- the skill and level you are currently training, and when you were last online
+- what you are doing right now (the skill and the exact action), and when you were last online
+- all your skill levels and the gear you have equipped
 
-It never sends your save, your items, or anything about your Steam or game account. Other members of your guilds can see your name, rank, online status and current skill.
+It never sends your save, your bank, or anything about your Steam or game account. Other members of your guilds can see your name, rank, online status, current action, skill levels and equipped gear.
+
+If you enabled guilds on an earlier version, the Guild window shows the updated notice once and waits for you to accept it before sending the new information.
 
 The server cannot check Steam logins, so your identity is a secret key stored on your PC in `%APPDATA%\Games By Malcs\Melvor Idle 2\mod-data`. Keep that folder if you reinstall Windows.
 
@@ -182,13 +205,14 @@ Requires the .NET 10 SDK and the game installed through Steam.
 | `tools/Melvor2.Patcher` | Adds the bootstrap call to the game DLL. |
 | `src/Melvor2.ModLoader` | Loads every DLL in `<game>\mods` and calls `ModEntry.Init()`. |
 | `src/Melvor2.Chat` | The mod: chat window, Steam lobby code, the buttons added to the game's bars, and the guild window (`Guilds/` talks to the server). |
-| `server/` | The guild API (Node on Vercel, MongoDB Atlas). See `server/README.md`. |
+| `src/Melvor2.Chat/GameState` | Reads and drives the game's own model: current action, profile snapshot, joining an action, and the party XP bonus (a modifier added through the game's ModifierSystem). |
+| `server/` | The guild API (Node on Vercel, MongoDB Atlas). See `server/README.md`. `server/scripts/fake-partner.mjs` is a throwaway guild member for testing profiles and the party bonus alone. |
 | `tools/install.ps1`, `tools/uninstall.ps1` | Build and install from source. |
 | `tools/package.ps1` | Builds `dist\Melvor2Chat.zip` for a release. |
 
 To publish a new version: run `tools\package.ps1`, then create a GitHub release and attach `dist\Melvor2Chat.zip` under exactly that file name. The install line always downloads the latest release.
 
-The mod copies the look of the game's own UI from the live scene tree, because the game's scene files are packed. After a game update moves things, create an empty file `%APPDATA%\Games By Malcs\Melvor Idle 2\mod-probe\ui-probe.request`, load a save, and read `ui-probe.txt` in the same folder (see `src/Melvor2.Chat/UiProbe.cs`).
+The mod copies the look of the game's own UI from the live scene tree, because the game's scene files are packed. After a game update moves things, create an empty file `%APPDATA%\Games By Malcs\Melvor Idle 2\mod-probe\ui-probe.request`, load a save, and read `ui-probe.txt` in the same folder (see `src/Melvor2.Chat/UiProbe.cs`). A `game-probe.request` file in the same folder does the same for the game model: action ids, skills, gear and a short modifier test (`GameState/GameProbe.cs`).
 
 To write another mod: add a class library beside `Melvor2.Chat` with a public static `ModEntry.Init()`. Use built-in Godot nodes and signals; custom `Node` subclasses are not registered with Godot's script system.
 

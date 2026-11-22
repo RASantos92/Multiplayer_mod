@@ -78,6 +78,13 @@ export function createStore(db) {
     touchPlayer: (id, keyHash, set) =>
       players.findOneAndUpdate({ _id: id, keyHash }, { $set: set }, { returnDocument: 'after' }),
     deletePlayer: (id) => players.deleteOne({ _id: id }),
+    setProfile: (id, profile) => players.updateOne({ _id: id }, { $set: { profile } }),
+    /** True when the two players are members of at least one common guild. */
+    async shareGuild(a, b) {
+      const mine = await members.find({ playerId: a }, { projection: { guildId: 1 } }).toArray();
+      if (!mine.length) return false;
+      return (await members.countDocuments({ playerId: b, guildId: { $in: mine.map((m) => m.guildId) } }, { limit: 1 })) > 0;
+    },
 
     // ---- guilds ----
     /** Returns the new id, or false when the name is taken. */

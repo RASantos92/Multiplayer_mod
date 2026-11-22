@@ -1,6 +1,9 @@
 using GamesByMalcs.Melvor2.Platforms;
 using GamesByMalcs.Melvor2.Platforms.Steam;
+using GamesByMalcs.Melvor2;
+using GamesByMalcs.Melvor2.Components.Actions;
 using Godot;
+using Melvor2.Chat.GameState;
 using Melvor2.Chat.Guilds;
 
 namespace Melvor2.Chat;
@@ -8,7 +11,7 @@ namespace Melvor2.Chat;
 /// <summary>Found and called by Melvor2.ModLoader.</summary>
 public static class ModEntry
 {
-    public const string Version = "0.2.0";
+    public const string Version = "0.3.0";
 
     private static SceneTree? s_tree;
     private static ChatPanel? s_panel;
@@ -16,6 +19,15 @@ public static class ModEntry
     private static GameUiHook? s_hook;
     private static GuildService? s_guilds;
     private static bool s_failed;
+    private static ActivityInfo? s_activity;
+    private static double s_sinceGameWork;
+    private static double s_sinceProfile = 60;
+
+    /// <summary>The party XP bonus (one per game session).</summary>
+    internal static PartyBoost Boost { get; } = new();
+
+    /// <summary>The loaded game when it is safe to touch (main thread, not paused), otherwise null.</summary>
+    internal static Game? CurrentGame() => s_tree == null ? null : GameAccess.Current(s_tree);
     private static bool s_hotkeyDown;
 
     public static void Init()
@@ -35,6 +47,53 @@ public static class ModEntry
         }
     }
 
+    /// <summary>
+    /// Twice a second, while the game model is safe to touch: note what the character is doing, keep the party
+    /// bonus in step with the latest guild sync, and offer the profile for upload when it changes.
+    /// </summary>
+    private static void GameWork(double delta)
+    {
+        s_sinceGameWork += delta;
+        s_sinceProfile += delta;
+        if (s_sinceGameWork < 0.5 || s_guilds == null) return;
+        s_sinceGameWork = 0;
+
+        Game? game = CurrentGame();
+        if (game == null)
+        {
+            // Menus, loading, or offline progress running on another thread: touch nothing.
+            s_activity = null;
+            s_guilds.Party = false;
+            return;
+        }
+
+        try
+        {
+            s_activity = ActivityTracker.Read(game, out ActionComponent? component);
+
+            if (!s_guilds.Enabled)
+            {
+                Boost.Clear();
+                s_guilds.Party = false;
+                return;
+            }
+
+            string? partner = s_activity == null ? null : s_guilds.FindPartner(s_activity.Key);
+            Boost.Update(game, s_activity, component, partner, s_guilds.LastSyncUtc);
+            s_guilds.Party = partner != null || Boost.Active;
+
+            if (s_sinceProfile >= 10)
+            {
+                s_sinceProfile = 0;
+                s_guilds.OfferProfile(ProfileSnapshot.Build(game));
+            }
+        }
+        catch (Exception e)
+        {
+            Log("Game work failed: " + e);
+        }
+    }
+
     internal static void Log(string message) => GD.Print("[Chat] " + message);
 
     private static void OnFrame()
@@ -46,7 +105,10 @@ public static class ModEntry
             {
                 s_panel = new ChatPanel(s_tree!.Root);
                 s_panel.AddSystemLine("Chat mod v" + Version + ". Waiting for Steam...");
-                s_guilds = new GuildService();
+                s_guilds = new GuildService { Activity = () => s_activity };
+                Boost.Changed += () => s_panel.AddSystemLine(Boost.Active
+                    ? "Party bonus on: +5% " + Boost.SkillName + " XP while you train with " + Boost.PartnerName + "."
+                    : "Party bonus ended.");
                 s_panel.BindGuilds(s_guilds);
                 s_hook = new GameUiHook(s_tree, s_panel, s_guilds);
             }
@@ -68,6 +130,7 @@ public static class ModEntry
             {
                 s_guilds.Active = s_panel.ShowingGuildChannel || (s_hook?.GuildWindowOpen ?? false);
                 s_guilds.Tick(delta);
+                GameWork(delta);
             }
 
             try
@@ -81,6 +144,7 @@ public static class ModEntry
                 Log("Game UI hook disabled after error: " + e);
             }
             if (UiProbe.Requested) UiProbe.Tick(s_tree!);
+            if (GameState.GameProbe.Requested) GameState.GameProbe.Tick(s_tree!);
 
             bool down = Input.IsKeyPressed(Key.F8);
             if (down && !s_hotkeyDown) s_panel.Toggle();
