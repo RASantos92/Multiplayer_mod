@@ -1,0 +1,5 @@
+{
+  "endpoint": "https://eus.codesigning.azure.net/",
+  "account": "your-artifact-signing-account-name",
+  "certificateProfile": "your-public-trust-certificate-profile-name"
+}
