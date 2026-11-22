@@ -3,6 +3,7 @@
 // { status, body }.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { ObjectId } from 'mongodb';
+import { bonusesOf, createGrounds } from './grounds.js';
 import { createMarket } from './market.js';
 
 export const PROTOCOL = 1;
@@ -363,6 +364,7 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
   const banned = () => new HttpError(403, 'banned', 'This account has been banned from this guild server.');
 
   const market = createMarket({ store, now, guildCtx, requireRank, limits: limits.market });
+  const grounds = createGrounds({ store, now, guildCtx, requireRank, limits: limits.grounds });
 
   // ----- handlers: (ctx) => body | reply(status, body) -----
   // ctx = { me, player, params, query, body, headers, ip }
@@ -453,12 +455,24 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       if (body.status !== undefined) set.status = vStatus(body.status, t);
       if (body.name !== undefined) set.name = vPlayerName(body.name);
 
-      if (!(await store.touchPlayer(me, keyHash, set))) {
+      const self = await store.touchPlayer(me, keyHash, set);
+      if (!self) {
         const who = await store.getPlayer(me);
         throw who?.banned && sameHash(who.keyHash, keyHash) ? banned() : unknownCaller();
       }
       const [, memberships] = await Promise.all([rate(me, 'sync'), store.membershipsOf(me)]);
       const gids = memberships.map((m) => m.guild._id);
+
+      // Guild Grounds counts (kills, laps, thieving) ride along; each numbered batch is applied once.
+      let groundsAck = null;
+      if (body.grounds !== undefined) {
+        const counted = await grounds.applyCounts({ id: me, name: self.name }, gids, body.grounds);
+        groundsAck = counted.ack;
+        for (const guild of counted.changed) {
+          const m = memberships.find((x) => String(x.guild._id) === String(guild._id));
+          if (m) m.guild = guild;
+        }
+      }
 
       const [roster, fetched, reqs] = await Promise.all([
         store.rosters(gids),
@@ -500,9 +514,12 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
           name: guild.name,
           rank: rankOf(guild, member),
           marketRev: guild.marketRev ?? 0,
+          groundsRev: guild.groundsRev ?? 0,
+          bonuses: bonusesOf(guild),
           members: sortMembers(byGuild.get(String(guild._id))),
         })),
         claims,
+        ...(groundsAck == null ? {} : { groundsAck }),
         messages: fresh.map(messageOut),
         invites: reqs.filter((r) => r.kind === 'invite').map(inviteOut),
       };
@@ -846,6 +863,7 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
     ['POST', 'guilds/:id/messages', h.postMessage],
     ['GET', 'guilds/:id/messages', h.history],
     ...market.routes,
+    ...grounds.routes,
   ].map(([method, pattern, fn, opts]) => ({ method, parts: pattern.split('/'), fn, auth: opts?.auth !== false }));
 
   function match(method, segs) {

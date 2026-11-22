@@ -187,6 +187,7 @@ public static class ModEntry
             if (GameState.GameProbe.Requested) GameState.GameProbe.Tick(s_tree!);
             if (GameState.CombatProbe.Requested) GameState.CombatProbe.Tick(s_tree!, delta);
             if (GameState.BankProbe.Requested) GameState.BankProbe.Tick(s_tree!);
+            if (GameState.GroundsProbe.Requested) GameState.GroundsProbe.Tick(s_tree!);
 
             bool down = Input.IsKeyPressed(Key.F8);
             if (down && !s_hotkeyDown) s_panel.Toggle();

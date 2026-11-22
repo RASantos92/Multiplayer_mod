@@ -2,6 +2,7 @@
 // module, so they can be exercised against any database handle (tests use
 // mongodb-memory-server).
 
+import { createGroundsStore } from './groundsStore.js';
 import { createMarketStore } from './marketStore.js';
 
 const DAY = 24 * 60 * 60;
@@ -17,6 +18,7 @@ export function createStore(db) {
   const ratelimits = db.collection('ratelimits');
 
   const market = createMarketStore(db);
+  const grounds = createGroundsStore(db);
   let initPromise;
 
   /** insertOne that reports a duplicate key as `false` instead of throwing. */
@@ -32,6 +34,7 @@ export function createStore(db) {
 
   return {
     ...market,
+    ...grounds,
     /** Create indexes once per process (idempotent on the server). */
     init() {
       initPromise ??= Promise.all([
@@ -46,6 +49,7 @@ export function createStore(db) {
         messages.createIndex({ at: 1 }, { expireAfterSeconds: 14 * DAY }),
         ratelimits.createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
         ...market.marketIndexes(),
+        ...grounds.groundsIndexes(),
       ]).catch((e) => {
         initPromise = undefined;
         throw e;
@@ -249,6 +253,7 @@ export function createStore(db) {
         requests.deleteMany({ guildId }),
         withMessages ? messages.deleteMany({ guildId }) : null,
         market.purgeMarketOfGuild(guildId),
+        grounds.purgeGroundsOfGuild(guildId),
       ]),
     /** Remove everything that hangs off a player (not the player document itself). */
     purgePlayerChildren: (playerId) =>
@@ -257,6 +262,7 @@ export function createStore(db) {
         requests.deleteMany({ $or: [{ playerId }, { by: playerId, kind: 'invite' }] }),
         messages.deleteMany({ playerId }),
         market.purgeMarketOfPlayer(playerId),
+        grounds.purgeGroundsOfPlayer(playerId),
       ]),
   };
 }
