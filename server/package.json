@@ -1,0 +1,20 @@
+{
+  "name": "melvor2-guild-api",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Guild API for the unofficial Melvor Idle 2 multiplayer mod (Vercel functions + MongoDB Atlas)",
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "test": "node --test --test-timeout=600000 \"test/*.test.js\"",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "mongodb": "^6.12.0"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^10.1.4"
+  }
+}
