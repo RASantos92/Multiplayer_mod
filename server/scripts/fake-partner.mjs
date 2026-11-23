@@ -149,7 +149,7 @@ while (Date.now() < deadline) {
     const status = action ? { skill: action.entity.split(':')[1], level: 75, action, ...(combat ? { combat } : {}) } : null;
     let grounds;
     if (doGrounds) {
-      grounds = { seq: Date.now(), kills: { 'MelvorBase:Golbin': 3, 'MelvorBase:Sailfish': 2, 'MelvorBase:Wolf': 2 }, laps: { 'MelvorBase:Climb1': 1 }, steals: { 'MelvorBase:Citizen': 2 } };
+      grounds = { seq: Date.now(), kills: { 'MelvorBase:Golbin': 3, 'MelvorBase:GreenSlime': 2, 'MelvorBase:MagicCow': 2 }, laps: { 'MelvorBase:Climb1': 1 }, steals: { 'MelvorBase:Citizen': 2 } };
       const view = await call('GET', `/guilds/${guild.id}/grounds`);
       const open = (view.json.tiers ?? []).flatMap((t) => t.locations).flatMap((l) => l.tasks).find((t) => t.kind === 'donate' && t.have < t.need);
       const item = open?.items.find((i) => i.worth === view.json.unit) ?? open?.items[0];

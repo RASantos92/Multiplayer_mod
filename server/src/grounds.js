@@ -103,7 +103,7 @@ export function createGrounds({ store, now, guildCtx, requireRank, limits = {} }
           need,
           have: Math.min(need, p[task.id] ?? 0),
           ...(task.kind === 'donate' ? { items: [...WORTHS.get(task.group)].map(([item, worth]) => ({ item, worth })) } : {}),
-          ...(task.enemies ? { enemies: task.enemies } : {}),
+          ...(task.area ? { area: task.area } : {}),
           mine: gave.find((t) => t.id === me)?.amount ?? 0,
           top: gave.slice(0, G.topContributors),
         };

@@ -168,7 +168,7 @@ test('donate: two members racing for the last units never push a task past its n
 
 test('counts: batches from /sync are applied once each, to every matching task', async () => {
   const { owner, member, guild, g } = await guildOf();
-  const first = await syncOf(member, { seq: 100, kills: { 'MelvorBase:Chicken': 7, 'MelvorBase:Cow': 3 }, laps: { 'MelvorBase:SomeCourse': 2 }, steals: { 'MelvorBase:Man': 4 } });
+  const first = await syncOf(member, { seq: 100, kills: { 'MelvorBase:Golbin': 7, 'MelvorBase:GolbinScout': 3, 'MelvorBase:Chicken': 9 }, laps: { 'MelvorBase:SomeCourse': 2 }, steals: { 'MelvorBase:Man': 4 } });
   assert.equal(first.groundsAck, 100);
   assert.ok(guildIn(first, guild).groundsRev > 0);
   // The same batch again, and an older one, change nothing but are still acknowledged.
@@ -181,15 +181,17 @@ test('counts: batches from /sync are applied once each, to every matching task',
 
   const view = await ok(owner, 'GET', g);
   for (const loc of view.tiers[0].locations) {
+    // Golbins live in the Golbin Forest (Gatehouse and Watchtower); chickens are in no area.
     const kills = loc.tasks.find((t) => t.kind === 'kill');
-    assert.equal(kills.have, kills.enemies ? 0 : Math.min(kills.need, 10_000), kills.id); // chickens and cows are not on any list
+    const golbins = kills.area === 'Golbin Forest';
+    assert.equal(kills.have, golbins ? 10_000 : 0, kills.id);
     assert.equal(loc.tasks.find((t) => t.kind === 'lap').have, 2_000);
     assert.equal(loc.tasks.find((t) => t.kind === 'steal').have, 4_000);
-    assert.deepEqual(kills.top.map((t) => t.name), kills.enemies ? [] : ['Member']);
+    assert.deepEqual(kills.top.map((t) => t.name), golbins ? ['Member'] : []);
   }
   // Counts never overshoot.
-  await syncOf(owner, { seq: 1, kills: { 'MelvorBase:Chicken': 100_000, 'MelvorBase:Wolf': 5 } });
-  assert.equal(taskOf(await ok(owner, 'GET', g), 'kennels_kills').have, 5_000); // wolves are beasts
+  await syncOf(owner, { seq: 1, kills: { 'MelvorBase:Golbin': 100_000, 'MelvorBase:MagicCow': 5 } });
+  assert.equal(taskOf(await ok(owner, 'GET', g), 'kennels_kills').have, 5_000); // Magic Cows live in the Corrupted Farmlands
   const kills = taskOf(await ok(owner, 'GET', g), 'gatehouse_kills');
   assert.equal(kills.have, kills.need);
 });
@@ -206,7 +208,7 @@ test('completing every task at a location gives the guild its bonus through /syn
   const { owner, member, guild, g } = await guildOf();
   await give(owner, g, 'moat_fish', GROUPS.fish.base, need('moat_fish'));
   await give(owner, g, 'moat_crops', GROUPS.crops.base, need('moat_crops'));
-  await syncOf(owner, { seq: 1, kills: { 'MelvorBase:Chicken': 500, 'MelvorBase:Sailfish': need('moat_kills') }, laps: { 'MelvorBase:SomeCourse': need('moat_laps') - 1 }, steals: { 'MelvorBase:Man': need('moat_steals') } });
+  await syncOf(owner, { seq: 1, kills: { 'MelvorBase:Chicken': 500, 'MelvorBase:GreenSlime': need('moat_kills') }, laps: { 'MelvorBase:SomeCourse': need('moat_laps') - 1 }, steals: { 'MelvorBase:Man': need('moat_steals') } });
   assert.deepEqual(guildIn(await syncOf(member), guild).bonuses, []);
   assert.equal(locations(await ok(owner, 'GET', g)).find((l) => l.id === 'moat').done, false);
 
