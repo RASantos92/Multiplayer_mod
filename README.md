@@ -64,7 +64,7 @@ In the Members tab, what an online member is doing shows as a button.
 
 Click a guild mate's fight in the Members tab to fight the same enemy or dungeon. You each fight your own copy of the enemy, and the mod links the two fights:
 
-- **Their damage helps you.** Each guild mate on your enemy has their own attack bar. When it fills, they attack your enemy, and it hits or misses as often as their own attacks do. If your combat levels are within 10 of each other the hit is worth **15%** of their damage; otherwise **8%**.
+- **Their damage helps you.** Each guild mate on your enemy has their own attack bar. When it fills, they attack your enemy, and it hits or misses as often as their own attacks do. You get **15%** of their damage, or **8%** if they are more than 10 combat levels above you. Each hit that lands is rolled between a low and a high amount, like their own hits, and averages out to that share.
 - **A Players tab** appears at the end of the tabs above your stats on the Combat page (friends icon; use the arrows if it is off the edge). It shows each player's health, damage per second, attack bar and gear.
 - **Each player has a colour.** Their name, their attack bar and the numbers their hits make on the enemy all use it.
 - **XP:** you only get combat XP for your own hits, plus the +5% per player bonus on your combat skills. Their hits just make kills, and so loot, faster.

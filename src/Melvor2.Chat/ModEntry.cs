@@ -11,7 +11,7 @@ namespace Melvor2.Chat;
 /// <summary>Found and called by Melvor2.ModLoader.</summary>
 public static class ModEntry
 {
-    public const string Version = "0.6.3";
+    public const string Version = "0.6.4";
 
     private static SceneTree? s_tree;
     private static ChatPanel? s_panel;

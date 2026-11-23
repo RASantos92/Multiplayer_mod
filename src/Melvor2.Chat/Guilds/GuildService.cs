@@ -10,7 +10,7 @@ internal sealed record GuildInfo(string Id, string Name, string Description, str
 /// <summary>ActionEntity / ActionTarget are game ids; empty when the member is idle or on an older mod.</summary>
 internal sealed record MemberInfo(string Id, string Name, string Rank, long LastSeen, string Skill, long Level,
     string ActionEntity, string ActionTarget, string ActionName,
-    string ActionArea = "", long Hp = 0, long MaxHp = 0, long Dps = 0, long CombatLevel = 0, long IntervalMs = 0, long HitPercent = 0)
+    string ActionArea = "", long Hp = 0, long MaxHp = 0, long Dps = 0, long CombatLevel = 0, long IntervalMs = 0, long HitPercent = 0, long MinHit = 0, long MaxHit = 0)
 {
     public bool HasAction => ActionEntity.Length > 0 && ActionTarget.Length > 0;
 
@@ -563,6 +563,11 @@ internal sealed class GuildService
                     w.WriteNumber("level", Math.Min(combat.Level, 100000));
                     w.WriteNumber("interval", combat.IntervalMs);
                     w.WriteNumber("hit", combat.HitPercent);
+                    if (combat.MaxHit > 0)
+                    {
+                        w.WriteNumber("min", Math.Min(combat.MinHit, combat.MaxHit));
+                        w.WriteNumber("max", combat.MaxHit);
+                    }
                     w.WriteEndObject();
                 }
                 w.WriteEndObject();
@@ -602,7 +607,8 @@ internal sealed class GuildService
                         status?.Str("skill") ?? "", status?.Long("level") ?? 0,
                         action?.Str("entity") ?? "", action?.Str("target") ?? "", action?.Str("name") ?? "",
                         action?.Str("area") ?? "", fight?.Long("hp") ?? 0, fight?.Long("maxHp") ?? 0,
-                        fight?.Long("dps") ?? 0, fight?.Long("level") ?? 0, fight?.Long("interval") ?? 0, fight?.Long("hit") ?? 0);
+                        fight?.Long("dps") ?? 0, fight?.Long("level") ?? 0, fight?.Long("interval") ?? 0, fight?.Long("hit") ?? 0,
+                        fight?.Long("min") ?? 0, fight?.Long("max") ?? 0);
                 }).ToList();
             }
             if (seen.Count != Guilds.Count) membershipChanged = true;

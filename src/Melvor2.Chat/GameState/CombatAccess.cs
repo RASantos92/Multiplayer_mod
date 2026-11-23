@@ -7,7 +7,7 @@ using GamesByMalcs.Melvor2.Entities.Combat;
 namespace Melvor2.Chat.GameState;
 
 /// <summary>What a player in a fight shares with guild mates.</summary>
-internal sealed record CombatInfo(int Hp, int MaxHp, int Dps, int Level, int IntervalMs, int HitPercent);
+internal sealed record CombatInfo(int Hp, int MaxHp, int Dps, int Level, int IntervalMs, int HitPercent, int MinHit = 0, int MaxHit = 0);
 
 /// <summary>
 /// Reads and nudges the game's combat model. Only call from the main thread with a game from
@@ -35,11 +35,48 @@ internal static class CombatAccess
         return period.Damage.Total / (period.Damage.RecordedCount * period.SamplePeriod) * 1000.0;
     }
 
-    public static CombatInfo Read(CombatEntity combat) => new(
-        Math.Max(0, combat.Player.Health.Current), Math.Max(1, combat.Player.Health.Max),
-        (int)Math.Clamp(Math.Round(Dps(combat)), 0, 1_000_000_000), Math.Max(0, Level(combat)),
-        (int)Math.Clamp(Math.Round(combat.Player.Stats.AttackInterval.Value), 250, 60000),
-        (int)Math.Clamp(Math.Round((combat.Player.TargetStats?.HitChance.Value ?? 1.0) * 100), 1, 100));
+    public static CombatInfo Read(CombatEntity combat)
+    {
+        (int min, int max) = HitRange(combat);
+        return new CombatInfo(
+            Math.Max(0, combat.Player.Health.Current), Math.Max(1, combat.Player.Health.Max),
+            (int)Math.Clamp(Math.Round(Dps(combat)), 0, 1_000_000_000), Math.Max(0, Level(combat)),
+            (int)Math.Clamp(Math.Round(combat.Player.Stats.AttackInterval.Value), 250, 60000),
+            (int)Math.Clamp(Math.Round((combat.Player.TargetStats?.HitChance.Value ?? 1.0) * 100), 1, 100),
+            min, max);
+    }
+
+    private static CombatEntity? s_watched;
+    private static DamageWatcher? s_watcher;
+    private static bool s_watcherFailed;
+
+    /// <summary>
+    /// My smallest and largest hit over all my attacks, the figures the game shows on the stats panel; (0, 0)
+    /// when they cannot be read. Uses the game's own watcher, kept for as long as the same save is loaded.
+    /// </summary>
+    public static (int Min, int Max) HitRange(CombatEntity combat)
+    {
+        if (s_watcherFailed) return (0, 0);
+        try
+        {
+            if (!ReferenceEquals(combat, s_watched))
+            {
+                s_watcher?.Dispose();
+                s_watcher = null;
+                s_watched = combat;
+                s_watcher = new AllAttacksDamageWatcher(combat.Player);
+            }
+            int max = Math.Clamp(s_watcher?.Maximum ?? 0, 0, 1_000_000_000);
+            int min = Math.Clamp(s_watcher?.Minimum ?? 0, 0, max);
+            return (min, max);
+        }
+        catch (Exception e)
+        {
+            s_watcherFailed = true;
+            ModEntry.Log("Hit range not available: " + e.Message);
+            return (0, 0);
+        }
+    }
 
     /// <summary>The overall combat level the game shows for the current combat style.</summary>
     public static int Level(CombatEntity combat) =>

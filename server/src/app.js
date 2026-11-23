@@ -142,6 +142,13 @@ function vCombat(c) {
     if (!isIntIn(c.hit, 1, 100)) throw fail('.hit must be an integer from 1 to 100');
     out.hit = c.hit;
   }
+  // Optional: the player's smallest and largest hit, so their hits on my enemy can vary the way theirs do.
+  if (c.max !== undefined && c.max !== null) {
+    if (!isIntIn(c.max, 1, 1e9)) throw fail('.max must be an integer from 1 to 1000000000');
+    if (!isIntIn(c.min ?? 0, 0, c.max)) throw fail('.min must be an integer from 0 to .max');
+    out.min = c.min ?? 0;
+    out.max = c.max;
+  }
   return out;
 }
 

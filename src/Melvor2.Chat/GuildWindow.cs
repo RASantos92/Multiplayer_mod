@@ -289,7 +289,7 @@ internal sealed partial class GuildWindow
                 "gear and, while you fight, your health, damage per second and combat level. Guild mates can see these.\n\n" +
                 "It also turns on the party bonus: +5% XP for each guild mate who is online doing the exact same " +
                 "action as you. In combat, guild mates fighting the same enemy also add part of their damage to " +
-                "your fight: 15% of it if your combat levels are within 10, otherwise 8%. The XP and loot " +
+                "your fight: 15% of it, or 8% if they are more than 10 combat levels above you. The XP and loot " +
                 "you earn that way stay on your character.\n\n" +
                 "The guild marketplace moves real items and gold: listing an item takes it out of your bank, " +
                 "buying takes your gold and gives you the item, and your listings and offers are visible to your " +
