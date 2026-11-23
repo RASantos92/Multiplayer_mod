@@ -114,12 +114,15 @@ internal sealed partial class GuildWindow
         _membersButton = TabButton("Members", group);
         _manageButton = TabButton("Manage", group);
         _marketButton = TabButton("Marketplace", group);
-        _membersButton.Pressed += () => { _manage = false; _market = false; RebuildPage(); };
-        _manageButton.Pressed += () => { _manage = true; _market = false; RefreshDetail(); RebuildPage(); };
+        _groundsButton = TabButton("Guild Grounds", group);
+        _membersButton.Pressed += () => { _manage = false; _market = false; _grounds = false; RebuildPage(); };
+        _manageButton.Pressed += () => { _manage = true; _market = false; _grounds = false; RefreshDetail(); RebuildPage(); };
         _marketButton.Pressed += OpenMarketTab;
+        _groundsButton.Pressed += OpenGroundsTab;
         _tabs.AddChild(_membersButton);
         _tabs.AddChild(_manageButton);
         _tabs.AddChild(_marketButton);
+        _tabs.AddChild(_groundsButton);
         right.AddChild(_tabs);
 
         _page = new VBoxContainer();
@@ -141,12 +144,22 @@ internal sealed partial class GuildWindow
             ModEntry.Market.Changed += OnServiceChanged;
             ModEntry.Market.Notice += OnNotice;
         }
+        if (ModEntry.Grounds != null)
+        {
+            ModEntry.Grounds.Changed += OnServiceChanged;
+            ModEntry.Grounds.Notice += OnNotice;
+        }
         _backdrop.TreeExiting += () =>
         {
             if (ModEntry.Market != null)
             {
                 ModEntry.Market.Changed -= OnServiceChanged;
                 ModEntry.Market.Notice -= OnNotice;
+            }
+            if (ModEntry.Grounds != null)
+            {
+                ModEntry.Grounds.Changed -= OnServiceChanged;
+                ModEntry.Grounds.Notice -= OnNotice;
             }
             service.Changed -= OnServiceChanged;
             service.Notice -= OnNotice;
@@ -186,6 +199,7 @@ internal sealed partial class GuildWindow
         _sinceDetail += delta;
         if (_manage && _sinceDetail > 10) RefreshDetail();
         TickMarket(delta);
+        TickGrounds(delta);
     }
 
     private void OnServiceChanged()
@@ -275,6 +289,10 @@ internal sealed partial class GuildWindow
                 "The guild marketplace moves real items and gold: listing an item takes it out of your bank, " +
                 "buying takes your gold and gives you the item, and your listings and offers are visible to your " +
                 "guild mates.\n\n" +
+                "Guild Grounds are tasks your guild does together. The mod reports how many monsters you " +
+                "defeat, Agility laps you complete and Thieving actions you succeed at, including while the " +
+                "game was closed, and guild mates can see what you contributed. Items you donate there leave " +
+                "your bank for good. Finished locations give every member a small passive bonus.\n\n" +
                 "It does not send your save or anything about your account. You can delete your guild data at any time."));
             if (!update)
             {
@@ -355,10 +373,12 @@ internal sealed partial class GuildWindow
                 break;
             case Mode.Guild when guild != null:
                 _manageButton.Text = guild.Rank == "owner" ? "Owner" : "Manage";
-                _membersButton.SetPressedNoSignal(!_manage && !_market);
+                _membersButton.SetPressedNoSignal(!_manage && !_market && !_grounds);
                 _manageButton.SetPressedNoSignal(_manage);
                 _marketButton.SetPressedNoSignal(_market);
-                if (_market) BuildMarket(guild);
+                _groundsButton.SetPressedNoSignal(_grounds);
+                if (_grounds) BuildGrounds(guild);
+                else if (_market) BuildMarket(guild);
                 else if (_manage) BuildManage(guild);
                 else BuildMembers(guild);
                 break;

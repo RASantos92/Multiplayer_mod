@@ -18,8 +18,9 @@ internal sealed class Identity
     /// Version of the "what guilds send" notice. Raise it whenever the mod starts sending or doing something
     /// new, so players who agreed to an older notice are asked again before it takes effect.
     /// 2 = adds skill levels, equipped gear, current action ids and the party XP bonus.
+    /// 5 = adds Guild Grounds: counts of kills, Agility laps and Thieving, item donations, passive bonuses.
     /// </summary>
-    public const int CurrentConsent = 4;
+    public const int CurrentConsent = 5;
 
     public string SteamId { get; }
     public string Key { get; }
