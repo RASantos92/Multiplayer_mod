@@ -126,6 +126,16 @@ Good to know:
 - If you restore an older save, counting starts again from there.
 - Everyone taking part needs version 0.6.0 or newer.
 
+**Tester chat (optional)**
+
+If you want to talk about the mod with other players or report a bug, click **Join tester chat** at the bottom left of the Guild window. A **Testers and bug reports** channel then appears in the chat window (F8), next to your guild channels.
+
+- It is one channel shared by everyone who joined it, whatever guild they are in, or none.
+- Everyone in it sees what you write there, with your Steam name. Do not post anything private.
+- Nothing is sent to it or read from it until you join. Click **Leave tester chat** to stop; what you already wrote stays for the others.
+- Messages are deleted after 14 days, and **Delete my guild data** removes yours straight away.
+- Needs version 0.6.1 or newer.
+
 ## How to chat
 
 Click the speech-bubble icon in the bottom bar (next to the music icon), or press **F8**.
@@ -223,7 +233,7 @@ Once you click **Enable Guilds**, the mod sends:
 
 - your Steam ID and Steam display name
 - the guilds you create or join, and your rank in them
-- your guild chat messages (deleted after 14 days)
+- your guild chat messages (deleted after 14 days), and, only if you join the tester chat, the messages you write there, which every player in that chat can read
 - what you are doing right now (the skill and the exact action), and when you were last online
 - all your skill levels and the gear you have equipped
 - while you are fighting: your health, damage per second, combat level, attack speed and chance to hit

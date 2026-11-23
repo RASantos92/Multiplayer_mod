@@ -214,6 +214,17 @@ Counts ride on `/sync`: the body may carry `grounds: {seq, counts: {counterId: {
 
 Leaving or being kicked keeps past contributions; deleting your data removes your name from them but not the guild's progress; disbanding deletes the grounds. Donated items are never returned.
 
+### Tester chat (mod v0.6.1)
+
+One chat channel shared by every player who opts in, for talking about the mod and reporting bugs. Its messages are stored like guild messages and reach players through `/sync` with `guildId: "testers"`. They expire after 14 days like all messages, and are removed when their author deletes their data or is banned.
+
+| Method and path | Who | Body | Result |
+| --- | --- | --- | --- |
+| `POST /testers` | anyone | `{on}` | `{testers}`. `true` joins, `false` leaves. `/me` and `/sync` report the current state as `testers`. |
+| `POST /testers/messages` | players who joined | `{body}` | `201 {message}`. Others get `403 not_tester`. Counts against the message rate limit. |
+
+The admin `count` command shows how many players are in the tester chat. To remove someone's messages, `ban` them.
+
 ### Joining
 
 | Method and path | Who | Body | Result |

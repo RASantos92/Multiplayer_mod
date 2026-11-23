@@ -1088,3 +1088,49 @@ test('player limit: no new players once it is reached; known players and admin c
   // A value that is not a whole number means no limit.
   assert.equal((await ok(null, 'POST', '/admin/stats', {}, adm(makeFetch(limits, { ...cfg, maxPlayers: 'lots' })))).maxPlayers, null);
 });
+
+test('tester chat: opt in to read and write, opt out to stop, and guild chat stays separate', async () => {
+  const [ann, bob, cat] = [await newPlayer('Ann'), await newPlayer('Bob'), await newPlayer('Cat')];
+  const sync = (p, body = {}) => ok(p, 'POST', '/sync', body);
+  const heard = (s) => s.messages.filter((m) => m.guildId === 'testers').map((m) => `${m.name}: ${m.body}`);
+
+  // Off by default: no messages, and posting is refused.
+  assert.equal((await sync(ann)).testers, false);
+  assert.equal((await ok(ann, 'GET', '/me')).testers, false);
+  await fails(403, 'not_tester', ann, 'POST', '/testers/messages', { body: 'hello?' });
+  await fails(400, 'invalid_body', ann, 'POST', '/testers', { on: 'yes' });
+  await fails(401, 'unauthorized', null, 'POST', '/testers', { on: true });
+
+  assert.deepEqual(await ok(ann, 'POST', '/testers', { on: true }), { testers: true });
+  assert.deepEqual(await ok(bob, 'POST', '/testers', { on: true }), { testers: true });
+  assert.equal((await ok(ann, 'GET', '/me')).testers, true);
+  const sent = await ok(ann, 'POST', '/testers/messages', { body: '  the Donate button is too big  ' });
+  assert.deepEqual([sent.message.guildId, sent.message.name, sent.message.body], ['testers', 'Ann', 'the Donate button is too big']);
+  await fails(400, 'invalid_message', ann, 'POST', '/testers/messages', { body: '   ' });
+
+  // Bob (opted in) hears it, also on a later sync with a cursor; Cat (not opted in) does not.
+  const first = await sync(bob);
+  assert.equal(first.testers, true);
+  assert.ok(heard(first).includes('Ann: the Donate button is too big'));
+  await ok(bob, 'POST', '/testers/messages', { body: 'agreed' });
+  assert.deepEqual(heard(await sync(ann, { since: (await sync(ann)).cursor })), []);
+  await ok(bob, 'POST', '/testers/messages', { body: 'one more' });
+  assert.ok(heard(await sync(ann)).includes('Bob: one more'));
+  assert.deepEqual(heard(await sync(cat)), []);
+
+  // Guild chat is not mixed in.
+  const { guild } = await ok(ann, 'POST', '/guilds', { name: uniq('Testers'), description: '' });
+  await ok(ann, 'POST', `/guilds/${guild.id}/messages`, { body: 'guild only' });
+  assert.ok(!heard(await sync(bob)).some((m) => m.includes('guild only')));
+  assert.ok((await sync(ann)).messages.some((m) => m.guildId === guild.id && m.body === 'guild only'));
+
+  // Opting out stops both directions; the messages already sent stay for the others.
+  assert.deepEqual(await ok(bob, 'POST', '/testers', { on: false }), { testers: false });
+  assert.deepEqual(heard(await sync(bob)), []);
+  await fails(403, 'not_tester', bob, 'POST', '/testers/messages', { body: 'still here?' });
+  assert.ok(heard(await sync(ann)).includes('Bob: agreed'));
+
+  // Deleting your data removes your tester messages too.
+  await ok(bob, 'DELETE', '/me');
+  assert.ok(!heard(await sync(ann)).some((m) => m.startsWith('Bob:')));
+});
