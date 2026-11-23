@@ -220,26 +220,31 @@ internal sealed partial class GuildWindow
             OnNotice("Not available right now.");
             return;
         }
+        // Pages are named after their skill ("MelvorBase:Combat"), and so are the counters.
         string counter = LocalId(stat);
-        PageNavigationOption? best = null;
-        foreach (PageNavigationOption option in game.Layout.Sidebar.Options.Concat(game.Layout.Sidebar.LegacyOptions))
+        GamePage? page = null;
+        foreach (GamePage candidate in game.Data.Database.GetRegistry<GamePage>().GetAllObjects())
         {
-            string? skill = option.Entity == null ? null : LocalId(option.Entity.Id);
-            if (option.Page == null || string.IsNullOrEmpty(skill) || !counter.StartsWith(skill, StringComparison.Ordinal)) continue;
-            if (best == null || skill.Length > LocalId(best.Entity!.Id).Length) best = option;
+            string name = LocalId(candidate.Id);
+            if (name.Length == 0 || !counter.StartsWith(name, StringComparison.Ordinal)) continue;
+            if (page == null || name.Length > LocalId(page.Id).Length) page = candidate;
         }
-        if (best?.Page == null)
+        if (page == null)
         {
             OnNotice("There is no page to go to for this task.");
             return;
         }
-        if (!best.Requirements.AreMet)
+
+        // If the sidebar has an entry for this page that is still locked, say so instead of opening it.
+        PageNavigationOption? option = game.Layout.Sidebar.Options.Concat(game.Layout.Sidebar.LegacyOptions)
+            .FirstOrDefault(o => ReferenceEquals(o.Page, page) || o.Entity?.Id == page.Id);
+        if (option?.Requirements is { AreMet: false })
         {
-            OnNotice("You have not unlocked " + best.DisplayName.Message + " yet.");
+            OnNotice("You have not unlocked " + option.DisplayName.Message + " yet.");
             return;
         }
         Close();
-        _gameView.SetCurrentPage(best.Page);
+        _gameView.SetCurrentPage(page);
     }
 
     private void BuildDonate(Game game, GuildInfo guild, GroundsService grounds, GroundsTask task)
