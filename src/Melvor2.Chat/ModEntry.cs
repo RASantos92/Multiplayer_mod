@@ -11,7 +11,7 @@ namespace Melvor2.Chat;
 /// <summary>Found and called by Melvor2.ModLoader.</summary>
 public static class ModEntry
 {
-    public const string Version = "0.6.1";
+    public const string Version = "0.6.2";
 
     private static SceneTree? s_tree;
     private static ChatPanel? s_panel;
@@ -36,7 +36,7 @@ public static class ModEntry
     /// <summary>The guild marketplace (created with the guild service).</summary>
     internal static MarketService? Market { get; private set; }
 
-    /// <summary>Guild Grounds: shared guild tasks and the bonuses they earn (created with the guild service).</summary>
+    /// <summary>Guild Grounds: the player's own tasks and the bonuses they earn (created with the guild service).</summary>
     internal static GroundsService? Grounds { get; private set; }
 
     private static readonly GroundsBonus s_groundsBonus = new();

@@ -110,13 +110,14 @@ Good to know:
 
 **Guild Grounds**
 
-The **Guild Grounds** tab in the Guild window shows places your guild builds up together. Each place has five tasks. When all five are done, every member of the guild gets that place's bonus for as long as they are in the guild.
+The **Guild Grounds** tab in the Guild window shows places you build up. Each place has five tasks. When you have done all five, you get that place's bonus for as long as you are in a guild.
 
-- **Tasks you do by playing:** each one names something specific, such as defeating monsters in one combat area, trapping a certain animal, running a named Agility course, pickpocketing a certain target, or making, catching or harvesting certain items. They count by themselves, for every guild you are in, including what your character did while the game was closed. You keep whatever you make.
+- **Your progress is your own.** Only what you do and donate counts, and guild mates each have their own. It is the same in every guild you are in and you keep it if you change guilds.
+
+- **Tasks you do by playing:** each one names something specific, such as defeating monsters in one combat area, trapping a certain animal, running a named Agility course, pickpocketing a certain target, or making, catching or harvesting certain items. They count by themselves, including what your character did while the game was closed. You keep whatever you make.
 - **Tasks you donate to:** click **Donate**, pick an item from your bank and choose how many. Any item of the right kind is accepted, and better ones count for more: each step up counts 25% more, each step down 25% less. The panel shows what every item counts as.
 - **Donations are final.** The items leave your bank for good and cannot be taken back. You click the Donate button twice to confirm.
-- **Bonuses:** small passive bonuses such as +2% protection or 2% faster Fishing. They apply while the game is open and you are in the guild. The same bonus from two guilds does not add up.
-- Hover over a task to see who contributed the most.
+- **Bonuses:** small passive bonuses such as +2% protection or 2% faster Fishing. They apply while the game is open and you are in at least one guild. Being in more guilds does not give more.
 
 Good to know:
 
@@ -124,7 +125,8 @@ Good to know:
 - If you give more than a task still needs, only what is needed is taken and the rest comes back.
 - Counting starts when you first play with version 0.6.0; earlier kills are not counted.
 - If you restore an older save, counting starts again from there.
-- Everyone taking part needs version 0.6.0 or newer.
+- Up to version 0.6.1 a guild shared its progress. Since then everyone has their own, starting from what they contributed themselves.
+- Needs version 0.6.0 or newer.
 
 **Tester chat (optional)**
 
