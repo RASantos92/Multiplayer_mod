@@ -11,7 +11,7 @@ namespace Melvor2.Chat;
 /// <summary>Found and called by Melvor2.ModLoader.</summary>
 public static class ModEntry
 {
-    public const string Version = "0.6.4";
+    public const string Version = "0.6.5";
 
     private static SceneTree? s_tree;
     private static ChatPanel? s_panel;
@@ -82,6 +82,7 @@ public static class ModEntry
             s_combat = null;
             s_guilds.Party = false;
             s_guilds.CombatParty = false;
+            s_guilds.Fighting = false;
             Fight.Clear();
             return;
         }
@@ -90,6 +91,7 @@ public static class ModEntry
         {
             s_activity = ActivityTracker.Read(game, out ActionComponent? component);
             s_combat = component?.Entity is GamesByMalcs.Melvor2.Entities.Combat.CombatEntity combat ? CombatAccess.Read(combat) : null;
+            s_guilds.Fighting = s_combat != null;
 
             if (!s_guilds.Enabled)
             {

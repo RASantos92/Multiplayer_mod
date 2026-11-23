@@ -141,7 +141,7 @@ Requests with a missing or wrong key are counted per IP address; after 30 in a m
 
 ### `POST /sync`
 
-Meant to be polled every 3 to 60 seconds (the mod uses 3 s with a guild screen open, 8 to 15 s in a party, 60 s otherwise). It sets my `lastSeen`, optionally my status and name, and returns everything the client needs to refresh.
+Meant to be polled every 3 to 60 seconds (the mod uses 3 s with a guild screen open, 8 to 15 s in a party, 10 s while fighting with a guild mate online, 60 s otherwise). It sets my `lastSeen`, optionally my status and name, and returns everything the client needs to refresh.
 
 Request:
 

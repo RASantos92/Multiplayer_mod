@@ -42,6 +42,7 @@ internal sealed record SearchHit(string Id, string Name, string Description, lon
 ///   - every 8 s while sharing a fight, every 15 s while sharing a skill (the bonuses run on leases);
 ///   - every 15 s for two minutes after my action changes, so a new party forms quickly, and while a guild
 ///     screen is open but the player has been away for a few minutes;
+///   - every 10 s while fighting alone with a guild mate online, so a mate joining the fight shows up quickly;
 ///   - once a minute otherwise.
 /// </summary>
 internal sealed class GuildService
@@ -49,6 +50,12 @@ internal sealed class GuildService
     private const double FastSync = 3;
     private const double PartySync = 15;
     private const double CombatSync = 8;
+
+    /// <summary>
+    /// While fighting alone with a guild mate online: often enough that someone joining my fight shows up
+    /// quickly, and that my health and damage are still fresh when they arrive.
+    /// </summary>
+    private const double WatchSync = 10;
 
     /// <summary>With a guild screen open, how long without input before syncing drops to the party rate.</summary>
     private const double AwaySeconds = 180;
@@ -113,6 +120,9 @@ internal sealed class GuildService
 
     /// <summary>Set by the mod while sharing a fight: health and DPS need to be fresher than skilling.</summary>
     public bool CombatParty { get; set; }
+
+    /// <summary>Set by the mod while my character is fighting, with or without company.</summary>
+    public bool Fighting { get; set; }
 
     /// <summary>When the last successful sync finished (local clock, UTC).</summary>
     public DateTime LastSyncUtc { get; private set; }
@@ -214,7 +224,20 @@ internal sealed class GuildService
         if (Active && SinceInput < AwaySeconds) return FastSync;
         if (CombatParty) return CombatSync;
         if (Party || _seeking > 0 || (Active && SinceInput < GoneSeconds)) return PartySync;
+        if (Fighting && MateOnline()) return WatchSync;
         return SlowSync;
+    }
+
+    private bool MateOnline()
+    {
+        foreach (List<MemberInfo> members in Members.Values)
+        {
+            foreach (MemberInfo member in members)
+            {
+                if (member.Id != _steamId && ServerNow - member.LastSeen < OnlineWindowMs) return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>The online guild mates doing exactly this action (each once, at most MaxPartners).</summary>
