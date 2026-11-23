@@ -125,6 +125,9 @@ internal sealed class GuildService
     /// <summary>Set by the UI: true while the guild window or a guild chat channel is on screen.</summary>
     public bool Active { get; set; }
 
+    /// <summary>Lets another service add its own part to each sync request (Guild Grounds counts).</summary>
+    public Action<System.Text.Json.Utf8JsonWriter>? ExtraSync { get; set; }
+
     /// <summary>Set by the mod: seconds since the player last moved the mouse or pressed anything.</summary>
     public double SinceInput { get; set; }
 
@@ -533,6 +536,7 @@ internal sealed class GuildService
             {
                 w.WriteNull("status");
             }
+            ExtraSync?.Invoke(w);
         });
 
         GuildApi.Post("/sync", body, result =>

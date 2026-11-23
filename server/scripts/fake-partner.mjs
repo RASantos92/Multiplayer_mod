@@ -33,6 +33,11 @@ const fakeHit = take('--hit', null);
 const fakeName = take('--name', 'Test Partner');
 const fakeInterval = Number(take('--interval', '3000'));
 const fakeLevel = take('--level', null);
+// --grounds: also work on the guild's Guild Grounds. Every round it reports a few kills, laps and thieving
+// successes and donates some base items to the first unfinished donation task.
+const groundsAt = args.indexOf('--grounds');
+const doGrounds = groundsAt >= 0;
+if (doGrounds) args.splice(groundsAt, 1);
 const stateFile = join(tmpdir(), 'melvor2-fake-partner.json');
 
 let auth = null;
@@ -142,7 +147,30 @@ while (Date.now() < deadline) {
 
   if (mine) {
     const status = action ? { skill: action.entity.split(':')[1], level: 75, action, ...(combat ? { combat } : {}) } : null;
-    const sent = await call('POST', '/sync', { since: cursor, status });
+    let grounds;
+    if (doGrounds) {
+      grounds = {
+        seq: Date.now(),
+        counts: {
+          'MelvorBase:CombatEnemyKilled': { 'MelvorBase:Golbin': 3, 'MelvorBase:GreenSlime': 2, 'MelvorBase:MagicCow': 2 },
+          'MelvorBase:AgilityCourseCompleted': { 'MelvorBase:Climb1': 1, 'MelvorBase:Climb2': 1 },
+          'MelvorBase:ThievingSuccessfulAction': { 'MelvorBase:Citizen': 2, 'MelvorBase:Thug': 2 },
+          'MelvorBase:CookingItemGained': { 'MelvorBase:Shrimp': 5 },
+          'MelvorBase:SmithingItemGained': { 'MelvorBase:CopperBar': 4 },
+          'MelvorBase:FletchingItemGained': { 'MelvorBase:ArrowShaft': 10 },
+          'MelvorBase:CraftingItemGained': { 'MelvorBase:Leather': 3 },
+          'MelvorBase:HuntingAnimalTrapped': { 'MelvorBase:WildChicken': 1, 'MelvorBase:WildCow': 1 },
+        },
+      };
+      const view = await call('GET', `/guilds/${guild.id}/grounds`);
+      const open = (view.json.tiers ?? []).flatMap((t) => t.locations).flatMap((l) => l.tasks).find((t) => t.kind === 'donate' && t.have < t.need);
+      const item = open?.items.find((i) => i.worth === view.json.unit) ?? open?.items[0];
+      if (item) {
+        const gave = await call('POST', `/guilds/${guild.id}/grounds/donate`, { task: open.id, item: item.item, qty: 25, nonce: randomBytes(12).toString('hex') });
+        console.log(gave.ok ? `Grounds: donated ${gave.json.accepted} ${item.item.split(':')[1]} to "${open.text}"` : `Grounds donation refused: ${JSON.stringify(gave.json)}`);
+      }
+    }
+    const sent = await call('POST', '/sync', { since: cursor, status, ...(grounds ? { grounds } : {}) });
     if (sent.ok) cursor = sent.json.cursor ?? cursor;
     const shown = action ? `${action.entity} | ${action.target}` + (combat ? ` (combat level ${combat.level}, ${combat.dps} DPS, hits ${combat.hit}%)` : '') : '(idle: nobody to mirror)';
     if (shown !== lastShown) { console.log(`Reporting: ${shown}`); lastShown = shown; }

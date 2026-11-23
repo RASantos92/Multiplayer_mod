@@ -108,6 +108,24 @@ Good to know:
 - **Delete my guild data** is refused while you have listings or anything waiting to be collected, so nothing gets lost.
 - Everyone trading needs version 0.5.0 or newer.
 
+**Guild Grounds**
+
+The **Guild Grounds** tab in the Guild window shows places your guild builds up together. Each place has five tasks. When all five are done, every member of the guild gets that place's bonus for as long as they are in the guild.
+
+- **Tasks you do by playing:** each one names something specific, such as defeating monsters in one combat area, trapping a certain animal, running a named Agility course, pickpocketing a certain target, or making, catching or harvesting certain items. They count by themselves, for every guild you are in, including what your character did while the game was closed. You keep whatever you make.
+- **Tasks you donate to:** click **Donate**, pick an item from your bank and choose how many. Any item of the right kind is accepted, and better ones count for more: each step up counts 25% more, each step down 25% less. The panel shows what every item counts as.
+- **Donations are final.** The items leave your bank for good and cannot be taken back. You click the Donate button twice to confirm.
+- **Bonuses:** small passive bonuses such as +2% protection or 2% faster Fishing. They apply while the game is open and you are in the guild. The same bonus from two guilds does not add up.
+- Hover over a task to see who contributed the most.
+
+Good to know:
+
+- Locked bank items cannot be donated.
+- If you give more than a task still needs, only what is needed is taken and the rest comes back.
+- Counting starts when you first play with version 0.6.0; earlier kills are not counted.
+- If you restore an older save, counting starts again from there.
+- Everyone taking part needs version 0.6.0 or newer.
+
 ## How to chat
 
 Click the speech-bubble icon in the bottom bar (next to the music icon), or press **F8**.
@@ -183,6 +201,7 @@ Uninstalling does not remove you from your guilds. To erase your guild data from
 - **Friends chat is invite-only.** It uses a private Steam lobby that only people you invite can join.
 - **It does not touch your account.** The mod does not use the game's cloud login and does not read or send your save.
 - **Guilds are opt-in.** Nothing goes to the guild server until you click **Enable Guilds**.
+- **Guild Grounds change your character.** Donated items are removed from your bank for good, and finished locations give small real bonuses (combat stats, Fishing and Ranching speed) while the game is open.
 - **The marketplace moves real items and gold.** A trade cannot be undone by the mod. If a save is rolled back after a trade (an old backup, or the cloud save replacing the local one), items or gold can end up duplicated or lost; the mod cannot detect that. Trade with people you trust.
 - **The party bonus is real XP, and shared fights give real loot.** The bonuses themselves are temporary and never written to your save, but the extra XP, kills and loot you earn with them stay on your character like any other.
 - **It is easy to undo.** The original game file is kept and the uninstall line puts it back.
@@ -209,6 +228,7 @@ Once you click **Enable Guilds**, the mod sends:
 - all your skill levels and the gear you have equipped
 - while you are fighting: your health, damage per second, combat level, attack speed and chance to hit
 - your marketplace listings and offers: the item, quantity and price
+- for Guild Grounds: for the things its tasks ask for, how many you did since the last report (monsters defeated, animals trapped, Agility courses, Thieving targets, and items made, gathered, burned or buried), and the items you donate
 
 It never sends your save, your bank, or anything about your Steam or game account. Other members of your guilds can see your name, rank, online status, current action, skill levels, equipped gear and, while you fight, your health and damage.
 

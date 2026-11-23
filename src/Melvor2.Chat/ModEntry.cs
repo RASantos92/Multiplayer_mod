@@ -11,7 +11,7 @@ namespace Melvor2.Chat;
 /// <summary>Found and called by Melvor2.ModLoader.</summary>
 public static class ModEntry
 {
-    public const string Version = "0.5.2";
+    public const string Version = "0.6.0";
 
     private static SceneTree? s_tree;
     private static ChatPanel? s_panel;
@@ -35,6 +35,12 @@ public static class ModEntry
 
     /// <summary>The guild marketplace (created with the guild service).</summary>
     internal static MarketService? Market { get; private set; }
+
+    /// <summary>Guild Grounds: shared guild tasks and the bonuses they earn (created with the guild service).</summary>
+    internal static GroundsService? Grounds { get; private set; }
+
+    private static readonly GroundsBonus s_groundsBonus = new();
+    private static readonly Dictionary<string, long> s_noBonuses = new();
 
     /// <summary>The loaded game when it is safe to touch (main thread, not paused), otherwise null.</summary>
     internal static Game? CurrentGame() => s_tree == null ? null : GameAccess.Current(s_tree);
@@ -129,6 +135,8 @@ public static class ModEntry
                     : "Party bonus ended.");
                 Market = new MarketService(s_guilds);
                 Market.Notice += text => s_panel.AddSystemLine("Marketplace: " + text);
+                Grounds = new GroundsService(s_guilds);
+                Grounds.Notice += text => s_panel.AddSystemLine("Guild Grounds: " + text);
                 s_panel.BindGuilds(s_guilds);
                 s_hook = new GameUiHook(s_tree, s_panel, s_guilds);
             }
@@ -170,6 +178,16 @@ public static class ModEntry
                     {
                         Log("Marketplace work failed: " + e);
                     }
+                    try
+                    {
+                        Game? game = CurrentGame();
+                        Grounds?.Tick(game);
+                        if (game != null && Grounds != null) s_groundsBonus.Update(game, s_guilds.Enabled ? Grounds.Bonuses : s_noBonuses);
+                    }
+                    catch (Exception e)
+                    {
+                        Log("Guild Grounds work failed: " + e);
+                    }
                 }
             }
 
@@ -187,6 +205,7 @@ public static class ModEntry
             if (GameState.GameProbe.Requested) GameState.GameProbe.Tick(s_tree!);
             if (GameState.CombatProbe.Requested) GameState.CombatProbe.Tick(s_tree!, delta);
             if (GameState.BankProbe.Requested) GameState.BankProbe.Tick(s_tree!);
+            if (GameState.GroundsProbe.Requested) GameState.GroundsProbe.Tick(s_tree!);
 
             bool down = Input.IsKeyPressed(Key.F8);
             if (down && !s_hotkeyDown) s_panel.Toggle();

@@ -31,6 +31,7 @@ internal sealed partial class GuildWindow
     private void OpenMarketTab()
     {
         _manage = false;
+        _grounds = false;
         _market = true;
         _sinceMarket = 0;
         if (_guildId != null) ModEntry.Market?.Load(_guildId, force: true);
