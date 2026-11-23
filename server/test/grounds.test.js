@@ -168,14 +168,14 @@ test('donate: two members racing for the last units never push a task past its n
 
 test('counts: batches from /sync are applied once each, to every matching task', async () => {
   const { owner, member, guild, g } = await guildOf();
-  const first = await syncOf(member, { seq: 100, kills: { 'MelvorBase:Golbin': 7, 'MelvorBase:GolbinScout': 3, 'MelvorBase:Chicken': 9 }, laps: { 'MelvorBase:SomeCourse': 2 }, steals: { 'MelvorBase:Man': 4 } });
+  const first = await syncOf(member, { seq: 100, counts: { 'MelvorBase:CombatEnemyKilled': { 'MelvorBase:Golbin': 7, 'MelvorBase:GolbinScout': 3, 'MelvorBase:Chicken': 9 }, 'MelvorBase:AgilityCourseCompleted': { 'MelvorBase:SomeCourse': 2 }, 'MelvorBase:ThievingSuccessfulAction': { 'MelvorBase:Man': 4 } } });
   assert.equal(first.groundsAck, 100);
   assert.ok(guildIn(first, guild).groundsRev > 0);
   // The same batch again, and an older one, change nothing but are still acknowledged.
-  assert.equal((await syncOf(member, { seq: 100, kills: { 'MelvorBase:Chicken': 7 } })).groundsAck, 100);
-  assert.equal((await syncOf(member, { seq: 50, kills: { 'MelvorBase:Chicken': 7 } })).groundsAck, 50);
+  assert.equal((await syncOf(member, { seq: 100, counts: { 'MelvorBase:CombatEnemyKilled': { 'MelvorBase:Chicken': 7 } } })).groundsAck, 100);
+  assert.equal((await syncOf(member, { seq: 50, counts: { 'MelvorBase:CombatEnemyKilled': { 'MelvorBase:Chicken': 7 } } })).groundsAck, 50);
   // Junk is dropped without failing the sync.
-  await syncOf(member, { seq: 101, kills: { 'not an id': 5, 'MelvorBase:Cow': -2, 'MelvorBase:Pig': 1.5 }, laps: 'many' });
+  await syncOf(member, { seq: 101, counts: { 'MelvorBase:CombatEnemyKilled': { 'not an id': 5, 'MelvorBase:Cow': -2, 'MelvorBase:Pig': 1.5 }, 'MelvorBase:AgilityCourseCompleted': 'many' } });
   assert.equal((await syncOf(member, 'nonsense')).groundsAck, undefined);
   assert.equal((await syncOf(member)).groundsAck, undefined);
 
@@ -190,7 +190,7 @@ test('counts: batches from /sync are applied once each, to every matching task',
     assert.deepEqual(kills.top.map((t) => t.name), golbins ? ['Member'] : []);
   }
   // Counts never overshoot.
-  await syncOf(owner, { seq: 1, kills: { 'MelvorBase:Golbin': 100_000, 'MelvorBase:MagicCow': 5 } });
+  await syncOf(owner, { seq: 1, counts: { 'MelvorBase:CombatEnemyKilled': { 'MelvorBase:Golbin': 100_000, 'MelvorBase:MagicCow': 5 } } });
   assert.equal(taskOf(await ok(owner, 'GET', g), 'kennels_kills').have, 5_000); // Magic Cows live in the Corrupted Farmlands
   const kills = taskOf(await ok(owner, 'GET', g), 'gatehouse_kills');
   assert.equal(kills.have, kills.need);
@@ -199,7 +199,7 @@ test('counts: batches from /sync are applied once each, to every matching task',
 test('counts go to every guild the player is in', async () => {
   const a = await guildOf();
   const { guild: second } = await ok(a.member, 'POST', '/guilds', { name: `Second ${randomBytes(4).toString('hex')}`, description: '' });
-  await syncOf(a.member, { seq: 5, laps: { 'MelvorBase:SomeCourse': 3 } });
+  await syncOf(a.member, { seq: 5, counts: { 'MelvorBase:AgilityCourseCompleted': { 'MelvorBase:SomeCourse': 3 } } });
   assert.equal(taskOf(await ok(a.owner, 'GET', a.g), 'moat_laps').have, 3_000);
   assert.equal(taskOf(await ok(a.member, 'GET', `/guilds/${second.id}/grounds`), 'moat_laps').have, 3_000);
 });
@@ -208,12 +208,12 @@ test('completing every task at a location gives the guild its bonus through /syn
   const { owner, member, guild, g } = await guildOf();
   await give(owner, g, 'moat_fish', GROUPS.fish.base, need('moat_fish'));
   await give(owner, g, 'moat_crops', GROUPS.crops.base, need('moat_crops'));
-  await syncOf(owner, { seq: 1, kills: { 'MelvorBase:Chicken': 500, 'MelvorBase:GreenSlime': need('moat_kills') }, laps: { 'MelvorBase:SomeCourse': need('moat_laps') - 1 }, steals: { 'MelvorBase:Man': need('moat_steals') } });
+  await syncOf(owner, { seq: 1, counts: { 'MelvorBase:CombatEnemyKilled': { 'MelvorBase:Chicken': 500, 'MelvorBase:GreenSlime': need('moat_kills') }, 'MelvorBase:AgilityCourseCompleted': { 'MelvorBase:SomeCourse': need('moat_laps') - 1 }, 'MelvorBase:ThievingSuccessfulAction': { 'MelvorBase:Man': need('moat_steals') } } });
   assert.deepEqual(guildIn(await syncOf(member), guild).bonuses, []);
   assert.equal(locations(await ok(owner, 'GET', g)).find((l) => l.id === 'moat').done, false);
 
   // The sync that carries the last lap already reports the bonus.
-  const done = await syncOf(member, { seq: 1, laps: { 'MelvorBase:SomeCourse': 1 } });
+  const done = await syncOf(member, { seq: 1, counts: { 'MelvorBase:AgilityCourseCompleted': { 'MelvorBase:SomeCourse': 1 } } });
   assert.deepEqual(guildIn(done, guild).bonuses, [{ id: 'fishingSpeed', value: 2 }]);
   assert.deepEqual(guildIn(await syncOf(owner), guild).bonuses, [{ id: 'fishingSpeed', value: 2 }]);
   const view = await ok(owner, 'GET', g);

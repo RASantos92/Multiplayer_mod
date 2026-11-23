@@ -3,7 +3,8 @@
 //
 //   donate  the member's game removes the items from the bank, then POSTs the donation. The reply
 //           says how many were accepted; the game puts the rest back.
-//   counts  kills, Agility laps and Thieving successes ride on /sync as numbered batches.
+//   counts  what members do by playing (kills, laps, items made...) rides on /sync as numbered batches
+//           of how much the game's own counters grew.
 //
 // The server cannot see anyone's game: counts and donations are taken on trust, within sanity limits.
 import { HttpError } from './app.js';
@@ -11,8 +12,8 @@ import { GROUPS, STEP, TIERS } from './groundsData.js';
 
 export const GROUNDS_LIMITS = {
   maxQty: 1_000_000, // items in one donation
-  maxCount: 100_000, // one kind of event in one batch
-  maxEntries: 60, // different monsters, courses or targets in one batch
+  maxCount: 100_000, // one counter entry in one batch, and one task's gain from one batch
+  maxEntries: 60, // counter entries in one batch
   topContributors: 5,
 };
 
@@ -32,7 +33,6 @@ export function worths(group) {
 const LOCATIONS = TIERS.flatMap((tier) => tier.locations);
 const TASKS = new Map(LOCATIONS.flatMap((loc) => loc.tasks.map((task) => [task.id, task])));
 const WORTHS = new Map(Object.keys(GROUPS).map((g) => [g, worths(g)]));
-const COUNT_KINDS = { kill: ['kills', 'enemies'], lap: ['laps', 'courses'], steal: ['steals', 'targets'] };
 const BONUS = new Map(LOCATIONS.map((loc) => [loc.id, loc.bonus]));
 
 /** The bonuses a guild has earned, for /sync: [{id, value}] with `value` in percent. */
@@ -74,12 +74,20 @@ export function createGrounds({ store, now, guildCtx, requireRank, limits = {} }
     return { accepted, guild: await store.bumpGrounds(guildId, done) };
   }
 
-  /** {id: count} from a batch, dropping anything malformed. */
+  /** `{counterId: {objectId: n}}` from a batch as a Map of Maps, dropping anything malformed. */
   function vCounts(v) {
-    const out = [];
+    const out = new Map();
     if (v == null || typeof v !== 'object' || Array.isArray(v)) return out;
-    for (const [id, n] of Object.entries(v).slice(0, G.maxEntries)) {
-      if (GAME_ID_RE.test(id) && isInt(n, 1, G.maxCount)) out.push([id, n]);
+    let room = G.maxEntries;
+    for (const [stat, entries] of Object.entries(v)) {
+      if (!GAME_ID_RE.test(stat) || entries == null || typeof entries !== 'object' || Array.isArray(entries)) continue;
+      const good = new Map();
+      for (const [id, n] of Object.entries(entries)) {
+        if (room <= 0) break;
+        room--;
+        if (GAME_ID_RE.test(id) && isInt(n, 1, G.maxCount)) good.set(id, n);
+      }
+      if (good.size) out.set(stat, good);
     }
     return out;
   }
@@ -103,6 +111,8 @@ export function createGrounds({ store, now, guildCtx, requireRank, limits = {} }
           need,
           have: Math.min(need, p[task.id] ?? 0),
           ...(task.kind === 'donate' ? { items: [...WORTHS.get(task.group)].map(([item, worth]) => ({ item, worth })) } : {}),
+          ...(task.stat ? { stat: task.stat } : {}),
+          ...(task.ids ? { ids: task.ids } : {}),
           ...(task.area ? { area: task.area } : {}),
           mine: gave.find((t) => t.id === me)?.amount ?? 0,
           top: gave.slice(0, G.topContributors),
@@ -155,7 +165,7 @@ export function createGrounds({ store, now, guildCtx, requireRank, limits = {} }
 
   return {
     /**
-     * Counts from /sync: `{seq, kills: {enemyId: n}, laps: {courseId: n}, steals: {targetId: n}}`.
+     * Counts from /sync: `{seq, counts: {counterId: {objectId: n}}}`, how much the game's counters grew.
      * Each batch number is applied once, to every guild the player is in. Returns the batch number
      * to acknowledge (null if the body was unusable) and the guild documents that changed.
      */
@@ -164,13 +174,13 @@ export function createGrounds({ store, now, guildCtx, requireRank, limits = {} }
       const ack = body.seq;
       if (!(await store.takeGroundsSeq(player.id, body.seq))) return { ack, changed: [] };
 
+      const counts = vCounts(body.counts);
       const adds = new Map();
       for (const task of TASKS.values()) {
-        const kind = COUNT_KINDS[task.kind];
-        if (!kind) continue;
-        const only = task[kind[1]];
+        const entries = task.stat && counts.get(task.stat);
+        if (!entries) continue;
         let n = 0;
-        for (const [id, count] of vCounts(body[kind[0]])) if (!only || only.includes(id)) n += count;
+        for (const [id, count] of entries) if (!task.ids || task.ids.includes(id)) n += count;
         if (n > 0) adds.set(task.id, Math.min(n, G.maxCount) * UNIT);
       }
       const changed = [];

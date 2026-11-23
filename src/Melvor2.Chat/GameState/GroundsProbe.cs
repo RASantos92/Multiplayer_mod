@@ -29,16 +29,10 @@ internal static class GroundsProbe
     /// <summary>Data classes worth listing, by type name.</summary>
     private static readonly HashSet<string> s_wanted = new()
     {
-        // Left empty on purpose: the tables were dumped once and are not needed again. Add type names to dump them.
-    };
-
-    private static readonly HashSet<string> s_wantedBefore = new()
-    {
-        "WoodcuttingRecipe", "MiningRecipe", "FishingRecipe", "FishingLocation", "FarmingRecipe", "FarmingCategory",
-        "RanchingAnimal", "RanchingAnimalVariant", "RanchingCategory", "HuntingAnimal", "HuntingAnimalSpecies",
-        "AgilityLocation", "AgilityCourse", "ThievingLocation", "ThievingRecipe",
-        "CombatArea", "Dungeon", "CombatAreaCategory", "BankTagCategory", "CombatStyle",
-        "ArtisanRecipe", "CookingRecipe", "HerbloreRecipe", "FiremakingRecipe", "GrainMillRecipe", "Enemy",
+        "WoodcuttingRecipe", "MiningRecipe", "FishingRecipe", "FishingLocation", "FarmingRecipe", "RanchingAnimal",
+        "HuntingAnimal", "HuntingLocation", "AgilityLocation", "AgilityCourse", "ThievingLocation", "ThievingRecipe",
+        "CombatArea", "Dungeon", "ArtisanRecipe", "CookingRecipe", "HerbloreRecipe", "FiremakingRecipe",
+        "RecipeCategory", "RecipeSubcategory",
     };
 
     /// <summary>Properties that only add noise to the listing.</summary>
@@ -81,6 +75,7 @@ internal static class GroundsProbe
                     s_log.AppendLine("## Counters (first reading)");
                     Counters(game);
                     Modifiers(game);
+                    Items(game);
                     Tables(game);
                     s_stage = 1;
                     s_frames = 0;
@@ -130,22 +125,14 @@ internal static class GroundsProbe
             if (stat.Value != 0) s_log.AppendLine("  " + stat.Id + " = " + stat.Value.ToString("0.##"));
         }
 
-        // Kills per monster: the per-enemy dictionary behind CombatTotalEnemiesKilled.
-        foreach ((Type type, DataRegistry registry) in game.Data.Database.Registries)
+        // Every counter that keeps a total per game object, with a few of its entries.
+        foreach (string id in GroundsCounter.All(game).Keys.OrderBy(k => k, StringComparer.Ordinal))
         {
-            if (type.Name != "EnemyStatistic" && type.Name != "AgilityCourseStatistic" && type.Name != "ThievingRecipeStatistic") continue;
-            foreach (object stat in All(registry))
+            Dictionary<string, long>? totals = GroundsCounter.Read(game, id);
+            s_log.AppendLine("  " + id + "  [" + GroundsCounter.All(game)[id].GetType().Name + "]  entries=" + (totals?.Count.ToString() ?? "unreadable"));
+            foreach ((string key, long total) in (totals ?? new Dictionary<string, long>()).OrderByDescending(t => t.Value).Take(4))
             {
-                if (stat is not INamespacedObject named) continue;
-                if (!named.Id.EndsWith("EnemyKilled") && !named.Id.EndsWith("CourseCompleted") && !named.Id.EndsWith("SuccessfulAction")) continue;
-                s_log.AppendLine("  " + named.Id + "  [" + stat.GetType().FullName + "]");
-                if (stat.GetType().GetProperty("Values")?.GetValue(stat) is not IEnumerable values) continue;
-                foreach (object pair in values)
-                {
-                    object? key = pair.GetType().GetProperty("Key")?.GetValue(pair);
-                    object? value = pair.GetType().GetProperty("Value")?.GetValue(pair);
-                    s_log.AppendLine("      " + ((key as INamespacedObject)?.Id ?? "?") + " = " + value);
-                }
+                s_log.AppendLine("      " + key + " = " + total);
             }
         }
     }

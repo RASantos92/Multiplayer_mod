@@ -5,9 +5,13 @@
 //   donate  members give items from their bank. `group` names an ordered list of items in GROUPS;
 //           the group's `base` item is worth 1, each step up 25% more, each step down 25% less to give
 //           (so a step down needs 25% more items).
-//   kill    monsters defeated in one combat area (see AREAS). Easy areas in tier 1, harder ones in later tiers.
-//   lap     Agility courses completed. `courses` limits it; without it any course counts.
-//   steal   successful Thieving actions. `targets` limits it; without it any target counts.
+//   count   something done by playing. `stat` is one of the game's own lifetime counters, which keep a
+//           total per game object, and `ids` says which objects count (without it, all of them):
+//             MelvorBase:CombatEnemyKilled         monsters killed, per monster
+//             MelvorBase:AgilityCourseCompleted    Agility courses completed, per course
+//             MelvorBase:ThievingSuccessfulAction  successful Thieving actions, per target
+//             MelvorBase:<Skill>ItemGained         items a skill produced, per item
+//           The mod reports how much those totals grew; `kind` only tells players what sort of task it is.
 //
 // Bonus ids are a fixed list the mod knows how to apply (see GroundsBonus.cs). `value` is in percent.
 // Task ids are stored in the database: never reuse or rename one that has been live.
@@ -98,9 +102,12 @@ export const AREAS = {
 };
 
 const donate = (id, text, need, group) => ({ id, kind: 'donate', text, need: need * SCALE, group });
-const kill = (id, need, area) => ({ id, kind: 'kill', text: `Defeat monsters in ${AREAS[area].name}`, need: need * SCALE, area: AREAS[area].name, enemies: AREAS[area].enemies });
-const lap = (id, text, need) => ({ id, kind: 'lap', text, need: need * SCALE });
-const steal = (id, text, need) => ({ id, kind: 'steal', text, need: need * SCALE });
+const kill = (id, need, area) => ({
+  id, kind: 'kill', text: `Defeat monsters in ${AREAS[area].name}`, need: need * SCALE,
+  stat: 'MelvorBase:CombatEnemyKilled', ids: AREAS[area].enemies, area: AREAS[area].name,
+});
+const lap = (id, text, need) => ({ id, kind: 'lap', text, need: need * SCALE, stat: 'MelvorBase:AgilityCourseCompleted' });
+const steal = (id, text, need) => ({ id, kind: 'steal', text, need: need * SCALE, stat: 'MelvorBase:ThievingSuccessfulAction' });
 
 
 /** A location with the usual five tasks: two donations, then kills, Agility laps and Thieving. */

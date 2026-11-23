@@ -12,7 +12,7 @@ internal sealed record GroundsGiver(string Id, string Name, long Amount);
 
 /// <summary>One task. Amounts are in units of 1/<see cref="GroundsService.Unit"/>.</summary>
 internal sealed record GroundsTask(string Id, string Kind, string Text, long Need, long Have, long Mine,
-    List<GroundsItem> Items, List<GroundsGiver> Top)
+    List<GroundsItem> Items, List<GroundsGiver> Top, string Stat, List<string> Ids)
 {
     public bool Done => Have >= Need;
 }
@@ -24,8 +24,9 @@ internal sealed record GroundsTier(string Name, List<GroundsLocation> Locations)
 /// <summary>
 /// Guild Grounds: shared guild tasks at locations, and the bonus each finished location gives.
 ///
-///   - Counting: every few seconds the game's lifetime counters (kills, Agility laps, Thieving successes) are
-///     compared with the last reading kept in a local journal. The difference, which includes anything done
+///   - Counting: each task that is done by playing names one of the game's lifetime counters (monsters killed,
+///     courses completed, items made by a skill...) and, usually, which monsters, courses or items count. Every
+///     few seconds those counters are compared with the last reading kept in a local journal. The difference, which includes anything done
 ///     while the game was closed, is sent with the next guild sync as a numbered batch. A batch is repeated
 ///     until the server acknowledges its number, and the server applies each number once.
 ///   - Donating: the items leave the bank and the save is written, the donation is noted in the journal, and
@@ -44,7 +45,7 @@ internal sealed class GroundsService
     private const int CountEveryTicks = 10; // Tick runs twice a second.
 
     private static readonly string s_dir = Path.Combine(OS.GetUserDataDir(), "mod-data");
-    private static readonly string s_file = Path.Combine(s_dir, "grounds-journal.json");
+    private static readonly string s_file = Path.Combine(s_dir, "grounds-journal-2.json");
 
     /// <summary>Items already taken out of the bank for a donation the server has not answered yet.</summary>
     private sealed class Gift
@@ -63,12 +64,16 @@ internal sealed class GroundsService
     private sealed class Reading
     {
         public long Xp;
-        public Dictionary<string, Dictionary<string, long>> Totals = NewCounts();
+        public Dictionary<string, Dictionary<string, long>> Totals = new();
     }
 
     private readonly GuildService _guilds;
     private readonly Dictionary<string, Reading> _readings = new();
-    private Dictionary<string, Dictionary<string, long>> _unsent = NewCounts();
+    private Dictionary<string, Dictionary<string, long>> _unsent = new();
+
+    /// <summary>The counters tasks use: counter id to the object ids that count (null: all of them).</summary>
+    private Dictionary<string, HashSet<string>?> _wanted = new();
+    private bool _askedForTasks;
     private Dictionary<string, Dictionary<string, long>>? _batch;
     private long _batchSeq;
     private long _lastSeq;
@@ -100,9 +105,6 @@ internal sealed class GroundsService
         guilds.ExtraSync = WriteSync;
         LoadJournal();
     }
-
-    private static Dictionary<string, Dictionary<string, long>> NewCounts() =>
-        GroundsCounter.Kinds.ToDictionary(kind => kind, _ => new Dictionary<string, long>());
 
     private static bool Any(Dictionary<string, Dictionary<string, long>> counts) => counts.Values.Any(c => c.Count > 0);
 
@@ -138,14 +140,44 @@ internal sealed class GroundsService
                         loc.Items("tasks").Select(t => new GroundsTask(t.Str("id"), t.Str("kind"), t.Str("text"), t.Long("need"),
                             t.Long("have"), t.Long("mine"),
                             t.Items("items").Select(i => new GroundsItem(i.Str("item"), i.Long("worth"))).ToList(),
-                            t.Items("top").Select(g => new GroundsGiver(g.Str("id"), g.Str("name"), g.Long("amount"))).ToList())).ToList());
+                            t.Items("top").Select(g => new GroundsGiver(g.Str("id"), g.Str("name"), g.Long("amount"))).ToList(),
+                            t.Str("stat"),
+                            t.TryGetProperty("ids", out JsonElement ids) && ids.ValueKind == JsonValueKind.Array
+                                ? ids.EnumerateArray().Where(i => i.ValueKind == JsonValueKind.String).Select(i => i.GetString()!).ToList()
+                                : new List<string>())).ToList());
                 }).ToList())).ToList();
+            NoteWanted(Tiers[guildId]);
             Changed?.Invoke();
         });
     }
 
+    /// <summary>Remembers which counters the tasks need, so counting also works before the tab is opened.</summary>
+    private void NoteWanted(List<GroundsTier> tiers)
+    {
+        var wanted = new Dictionary<string, HashSet<string>?>();
+        foreach (GroundsTask task in tiers.SelectMany(t => t.Locations).SelectMany(l => l.Tasks))
+        {
+            if (task.Stat.Length == 0) continue;
+            if (task.Ids.Count == 0) wanted[task.Stat] = null;
+            else if (!wanted.TryGetValue(task.Stat, out HashSet<string>? set)) wanted[task.Stat] = new HashSet<string>(task.Ids);
+            else set?.UnionWith(task.Ids);
+        }
+        string Key(Dictionary<string, HashSet<string>?> w) => string.Join(";", w.OrderBy(x => x.Key, StringComparer.Ordinal)
+            .Select(x => x.Key + "=" + (x.Value == null ? "*" : string.Join(",", x.Value.OrderBy(i => i, StringComparer.Ordinal)))));
+        if (Key(wanted) == Key(_wanted)) return;
+        _wanted = wanted;
+        SaveJournal();
+    }
+
     private void OnSynced(JsonElement body)
     {
+        // The task list is the same for every guild; fetch it once a session so counting knows what to watch.
+        if (!_askedForTasks && _guilds.Guilds.Count > 0)
+        {
+            _askedForTasks = true;
+            Load(_guilds.Guilds[0].Id, force: true);
+        }
+
         var best = new Dictionary<string, long>();
         foreach (JsonElement guild in body.Items("guilds"))
         {
@@ -180,16 +212,18 @@ internal sealed class GroundsService
         if (_batch == null && Any(_unsent) && _guilds.Guilds.Count > 0)
         {
             // Move what fits into a new numbered batch; the rest waits for the next one.
-            _batch = NewCounts();
+            _batch = new Dictionary<string, Dictionary<string, long>>();
             int room = MaxBatchEntries;
-            foreach (string kind in GroundsCounter.Kinds)
+            foreach ((string stat, Dictionary<string, long> waiting) in _unsent.ToList())
             {
-                foreach ((string id, long n) in _unsent[kind].ToList())
+                foreach ((string id, long n) in waiting.ToList())
                 {
                     if (room-- <= 0) break;
-                    _batch[kind][id] = n;
-                    _unsent[kind].Remove(id);
+                    if (!_batch.TryGetValue(stat, out Dictionary<string, long>? into)) _batch[stat] = into = new Dictionary<string, long>();
+                    into[id] = n;
+                    waiting.Remove(id);
                 }
+                if (waiting.Count == 0) _unsent.Remove(stat);
             }
             // Numbers only ever go up, also after a reinstall, so the server can tell a repeat from a new batch.
             _batchSeq = Math.Max(_lastSeq + 1, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -200,49 +234,50 @@ internal sealed class GroundsService
 
         w.WriteStartObject("grounds");
         w.WriteNumber("seq", _batchSeq);
-        foreach (string kind in GroundsCounter.Kinds)
-        {
-            if (_batch[kind].Count == 0) continue;
-            w.WriteStartObject(kind);
-            foreach ((string id, long n) in _batch[kind]) w.WriteNumber(id, n);
-            w.WriteEndObject();
-        }
+        WriteCounts(w, "counts", _batch);
         w.WriteEndObject();
     }
 
     private void Count(Game game)
     {
+        if (_wanted.Count == 0) return;
         string who = game.CharacterName;
         long xp = GroundsCounter.TotalXp(game);
-        Dictionary<string, Dictionary<string, long>> now = GroundsCounter.Read(game);
+        if (!_readings.TryGetValue(who, out Reading? last)) _readings[who] = last = new Reading { Xp = xp };
 
-        // First sight of this character, or its totals went backwards (another save under the same name, or an
-        // older save restored): start counting from here, crediting nothing.
-        bool known = _readings.TryGetValue(who, out Reading? last);
-        bool wentBack = known && (xp < last!.Xp || GroundsCounter.Kinds.Any(kind =>
-            last.Totals[kind].Any(old => (now[kind].TryGetValue(old.Key, out long n) ? n : 0) < old.Value)));
-        if (!known || wentBack)
-        {
-            _readings[who] = new Reading { Xp = xp, Totals = now };
-            SaveJournal();
-            return;
-        }
+        // Total XP never goes down on one character. If it did, this is another save under the same name, or an
+        // older save restored: forget the old readings and start counting from here, crediting nothing.
+        if (xp < last.Xp) last.Totals.Clear();
+        last.Xp = xp;
 
         bool changed = false;
         bool inGuild = _guilds.Enabled && _guilds.Guilds.Count > 0;
-        foreach (string kind in GroundsCounter.Kinds)
+        foreach ((string stat, HashSet<string>? only) in _wanted)
         {
-            foreach ((string id, long total) in now[kind])
+            Dictionary<string, long>? now = GroundsCounter.Read(game, stat);
+            if (now == null) continue;
+
+            // A counter seen for the first time, or one that went backwards, only sets the starting point.
+            bool known = last.Totals.TryGetValue(stat, out Dictionary<string, long>? before);
+            if (!known || before!.Any(old => (now.TryGetValue(old.Key, out long n) ? n : 0) < old.Value))
             {
-                long before = last!.Totals[kind].TryGetValue(id, out long old) ? old : 0;
-                if (total <= before) continue;
+                last.Totals[stat] = now;
                 changed = true;
-                // Outside a guild there is nobody to count for.
-                if (inGuild) _unsent[kind][id] = (_unsent[kind].TryGetValue(id, out long waiting) ? waiting : 0) + (total - before);
+                continue;
             }
+
+            foreach ((string id, long total) in now)
+            {
+                long had = before!.TryGetValue(id, out long old) ? old : 0;
+                if (total <= had) continue;
+                changed = true;
+                // Outside a guild there is nobody to count for, and things no task asks for are not reported.
+                if (!inGuild || (only != null && !only.Contains(id))) continue;
+                if (!_unsent.TryGetValue(stat, out Dictionary<string, long>? waiting)) _unsent[stat] = waiting = new Dictionary<string, long>();
+                waiting[id] = (waiting.TryGetValue(id, out long sofar) ? sofar : 0) + (total - had);
+            }
+            last.Totals[stat] = now;
         }
-        if (!changed && xp == last!.Xp) return;
-        _readings[who] = new Reading { Xp = xp, Totals = now };
         if (changed) SaveJournal();
     }
 
@@ -384,23 +419,25 @@ internal sealed class GroundsService
     private static void ReadCounts(JsonElement? from, Dictionary<string, Dictionary<string, long>> into)
     {
         if (from is not JsonElement counts) return;
-        foreach (string kind in GroundsCounter.Kinds)
+        foreach (JsonProperty stat in counts.EnumerateObject())
         {
-            if (counts.Child(kind) is not JsonElement entries) continue;
-            foreach (JsonProperty entry in entries.EnumerateObject())
+            if (stat.Value.ValueKind != JsonValueKind.Object) continue;
+            var entries = new Dictionary<string, long>();
+            foreach (JsonProperty entry in stat.Value.EnumerateObject())
             {
-                if (entry.Value.ValueKind == JsonValueKind.Number && entry.Value.TryGetInt64(out long n)) into[kind][entry.Name] = n;
+                if (entry.Value.ValueKind == JsonValueKind.Number && entry.Value.TryGetInt64(out long n)) entries[entry.Name] = n;
             }
+            into[stat.Name] = entries;
         }
     }
 
     private static void WriteCounts(Utf8JsonWriter w, string name, Dictionary<string, Dictionary<string, long>> counts)
     {
         w.WriteStartObject(name);
-        foreach (string kind in GroundsCounter.Kinds)
+        foreach ((string stat, Dictionary<string, long> entries) in counts)
         {
-            w.WriteStartObject(kind);
-            foreach ((string id, long n) in counts[kind]) w.WriteNumber(id, n);
+            w.WriteStartObject(stat);
+            foreach ((string id, long n) in entries) w.WriteNumber(id, n);
             w.WriteEndObject();
         }
         w.WriteEndObject();
@@ -418,7 +455,7 @@ internal sealed class GroundsService
             ReadCounts(root.Child("unsent"), _unsent);
             if (root.Child("batch") is JsonElement batch && _batchSeq > 0)
             {
-                _batch = NewCounts();
+                _batch = new Dictionary<string, Dictionary<string, long>>();
                 ReadCounts(batch, _batch);
             }
             if (root.Child("readings") is JsonElement readings)
@@ -428,6 +465,15 @@ internal sealed class GroundsService
                     var r = new Reading { Xp = reading.Value.Long("xp") };
                     ReadCounts(reading.Value.Child("totals"), r.Totals);
                     _readings[reading.Name] = r;
+                }
+            }
+            if (root.Child("wanted") is JsonElement wanted)
+            {
+                foreach (JsonProperty stat in wanted.EnumerateObject())
+                {
+                    _wanted[stat.Name] = stat.Value.ValueKind == JsonValueKind.Array
+                        ? new HashSet<string>(stat.Value.EnumerateArray().Where(i => i.ValueKind == JsonValueKind.String).Select(i => i.GetString()!))
+                        : null;
                 }
             }
             foreach (JsonElement g in root.Items("gifts"))
@@ -463,6 +509,19 @@ internal sealed class GroundsService
                     w.WriteNumber("xp", reading.Xp);
                     WriteCounts(w, "totals", reading.Totals);
                     w.WriteEndObject();
+                }
+                w.WriteEndObject();
+                w.WriteStartObject("wanted");
+                foreach ((string stat, HashSet<string>? only) in _wanted)
+                {
+                    if (only == null)
+                    {
+                        w.WriteNull(stat);
+                        continue;
+                    }
+                    w.WriteStartArray(stat);
+                    foreach (string id in only) w.WriteStringValue(id);
+                    w.WriteEndArray();
                 }
                 w.WriteEndObject();
                 w.WriteStartArray("gifts");
