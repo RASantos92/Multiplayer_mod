@@ -91,7 +91,8 @@ Click a guild mate's fight in the Members tab to fight the same enemy or dungeon
 
 The **Marketplace** tab in the Guild window lets guild mates sell items to each other for gold.
 
-- **Sell:** click **Sell an item**, pick something from your bank, choose how many and the price each. The items leave your bank straight away and wait on the market.
+- **Sell:** click **Sell an item**, pick a category tab and then an item from your bank, and choose how many and the price each. The items leave your bank straight away and wait on the market.
+- **Sell from the bank:** select one item in your bank and click **Sell on guild market** under the game's own sell options. It opens the same form with that item chosen; nothing is listed until you confirm.
 - **Price limits:** the price must be between 80% and 120% of what the game says the item is worth. The form shows the allowed range and refuses anything outside it.
 - **Buy:** click **Buy** on a listing and choose how many. **Buy now** takes your gold and puts the items in your bank within a second or two.
 - **Haggle:** in the same panel you can **Make offer** at a lower price (not below 80% of the item's value). The seller sees it under **Offers on your listings** and accepts or declines within 48 hours. If they accept, you pay and get the items automatically.
