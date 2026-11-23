@@ -203,16 +203,16 @@ A game id is `<Namespace>:<LocalId>`, where each part starts with an upper-case 
 
 ### Guild Grounds (mod v0.6)
 
-Shared guild tasks at locations. The content (locations, tasks, accepted items, bonuses) is in `src/groundsData.js`; change numbers there and deploy. Never rename or reuse a task id that has been live.
+Tasks at locations that each player works through by themselves; finishing a location gives that player its bonus while they are in a guild. Progress belongs to the player, not the guild: it is the same in every guild they are in and is kept when they change guilds. (Up to mod v0.6.1 progress was shared by a guild; a player's own progress starts from what they contributed then.) The content (locations, tasks, accepted items, bonuses) is in `src/groundsData.js`; change numbers there and deploy. Never rename or reuse a task id that has been live.
 
 | Method and path | Who | Body | Result |
 | --- | --- | --- | --- |
-| `GET /guilds/:id/grounds` | members | | `{rev, unit, tiers: [{id, name, locations: [{id, name, bonus: {id, value, text}, done, tasks: [{id, kind, text, need, have, mine, top: [{id, name, amount}], items?: [{item, worth}], enemies?}]}]}]}`. Amounts are in units of `1/unit` (thousandths). `kind` is `donate` or a label for a counted task (`kill`, `make`, `hunt`, `course`, `thieve`, `burn`, `bury`, `do`); counted tasks also carry `stat` and usually `ids`. |
+| `GET /guilds/:id/grounds` | members | | `{rev, unit, tiers: [{id, name, locations: [{id, name, bonus: {id, value, text}, done, tasks: [{id, kind, text, need, have, mine, top, items?: [{item, worth}], enemies?}]}]}]}`. Amounts are in units of `1/unit` (thousandths). `kind` is `donate` or a label for a counted task (`kill`, `make`, `hunt`, `course`, `thieve`, `burn`, `bury`, `do`); counted tasks also carry `stat` and usually `ids`. The answer is the caller's own progress, whichever of their guilds is asked; `mine` equals `have` and `top` is always empty (both kept for mod v0.6.0 and v0.6.1). |
 | `POST /guilds/:id/grounds/donate` | members | `{task, item, qty, nonce}` | `{accepted, qty}`. The donor's game has already removed the items; it puts back `qty - accepted`. The same `nonce` always gets the same answer. Progress never passes a task's `need`. |
 
-Counts ride on `/sync`: the body may carry `grounds: {seq, counts: {counterId: {objectId: n}}}`, how much the game's own per-object counters grew (for example `MelvorBase:CombatEnemyKilled` per monster, `MelvorBase:SmithingItemGained` per item). A task names its counter in `stat` and, usually, the objects that count in `ids`. A batch is applied once per `seq` (numbers must go up), to every guild the player is in, and the reply carries `groundsAck: seq`. Each guild in the `/sync` reply has `groundsRev` (changes when progress does) and `bonuses: [{id, value}]` for its finished locations. Nothing is verified: the server cannot see anyone's game.
+Counts ride on `/sync`: the body may carry `grounds: {seq, counts: {counterId: {objectId: n}}}`, how much the game's own per-object counters grew (for example `MelvorBase:CombatEnemyKilled` per monster, `MelvorBase:SmithingItemGained` per item). A task names its counter in `stat` and, usually, the objects that count in `ids`. A batch is applied once per `seq` (numbers must go up), and the reply carries `groundsAck: seq`. Each guild in the `/sync` reply has the player's `groundsRev` (changes when progress does) and `bonuses: [{id, value}]` for the locations the player finished, the same in every guild; the game takes the largest of each bonus, so nothing counts twice. Nothing is verified: the server cannot see anyone's game.
 
-Leaving or being kicked keeps past contributions; deleting your data removes your name from them but not the guild's progress; disbanding deletes the grounds. Donated items are never returned.
+Leaving, being kicked or a guild disbanding does not touch a player's progress, but the bonuses only apply while they are in at least one guild. Deleting your data removes your progress. Donated items are never returned.
 
 ### Tester chat (mod v0.6.1)
 

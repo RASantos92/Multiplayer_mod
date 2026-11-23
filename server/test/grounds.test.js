@@ -111,9 +111,10 @@ test('view: members see every location with empty progress; outsiders do not', a
   await fails(403, 'not_member', outsider, 'POST', `${g}/donate`, { task: 'gatehouse_logs', item: LOGS[BASE], qty: 1, nonce: nonce() });
 });
 
-test('donate: worth by step, contributors, a repeated nonce counts once, and bad input is refused', async () => {
+test('donate: worth by step, each player has their own progress, a repeated nonce counts once, and bad input is refused', async () => {
   const { owner, member, guild, g } = await guildOf();
   const rev0 = guildIn(await syncOf(owner), guild).groundsRev;
+  const memberRev0 = guildIn(await syncOf(member), guild).groundsRev;
 
   assert.deepEqual(await give(owner, g, 'gatehouse_logs', LOGS[BASE], 10), { accepted: 10, qty: 10 });
   assert.deepEqual(await give(member, g, 'gatehouse_logs', LOGS[BASE + 1], 10), { accepted: 10, qty: 10 });
@@ -123,11 +124,14 @@ test('donate: worth by step, contributors, a repeated nonce counts once, and bad
 
   const view = await ok(member, 'GET', g);
   const logs = taskOf(view, 'gatehouse_logs');
-  assert.equal(logs.have, 10_000 + 12_500 + 8_000);
-  assert.equal(logs.mine, 20_500);
-  assert.deepEqual(logs.top.map((t) => [t.name, t.amount]), [['Member', 20_500], ['Owner', 10_000]]);
-  assert.ok(guildIn(await syncOf(owner), guild).groundsRev > rev0);
-  assert.equal(view.rev, guildIn(await syncOf(owner), guild).groundsRev);
+  assert.equal(logs.have, 12_500 + 8_000);
+  assert.deepEqual([logs.mine, logs.top], [20_500, []]);
+  // What a guild mate gave is theirs alone.
+  const ownerView = await ok(owner, 'GET', g);
+  assert.equal(taskOf(ownerView, 'gatehouse_logs').have, 10_000);
+  assert.equal(guildIn(await syncOf(owner), guild).groundsRev, rev0 + 1);
+  assert.equal(guildIn(await syncOf(member), guild).groundsRev, memberRev0 + 2);
+  assert.equal(ownerView.rev, rev0 + 1);
 
   const d = (over) => ({ task: 'gatehouse_logs', item: LOGS[BASE], qty: 1, nonce: nonce(), ...over });
   await fails(400, 'bad_task', owner, 'POST', `${g}/donate`, d({ task: 'nope' }));
@@ -152,18 +156,17 @@ test('donate: a donation larger than what is left is trimmed, and a full task ac
   assert.equal(logs.have, logs.need);
 });
 
-test('donate: two members racing for the last units never push a task past its need', async () => {
-  const { owner, member, g } = await guildOf();
+test('donate: donations racing for the last units never push a task past its need', async () => {
+  const { owner, g } = await guildOf();
   await give(owner, g, 'ramparts_clay', 'MelvorBase:Clay', need('ramparts_clay') - 10);
   const results = await Promise.all([
     give(owner, g, 'ramparts_clay', 'MelvorBase:Clay', 8),
-    give(member, g, 'ramparts_clay', 'MelvorBase:Clay', 8),
-    give(member, g, 'ramparts_clay', 'MelvorBase:Clay', 8),
+    give(owner, g, 'ramparts_clay', 'MelvorBase:Clay', 8),
+    give(owner, g, 'ramparts_clay', 'MelvorBase:Clay', 8),
   ]);
   assert.equal(results.reduce((sum, r) => sum + r.accepted, 0), 10);
   const clay = taskOf(await ok(owner, 'GET', g), 'ramparts_clay');
   assert.equal(clay.have, clay.need);
-  assert.equal(clay.top.reduce((sum, t) => sum + t.amount, 0), clay.need);
 });
 
 const KILLS = 'MelvorBase:CombatEnemyKilled';
@@ -194,7 +197,8 @@ test('counts: batches from /sync are applied once each, only to the tasks that n
   assert.equal((await syncOf(member, 'nonsense')).groundsAck, undefined);
   assert.equal((await syncOf(member)).groundsAck, undefined);
 
-  const view = await ok(owner, 'GET', g);
+  assert.equal(taskOf(await ok(owner, 'GET', g), 'gatehouse_kills').have, 0); // not a guild mate's
+  const view = await ok(member, 'GET', g);
   const have = (id) => taskOf(view, id).have;
   // Golbins live in the Golbin Forest (Gatehouse and Watchtower); chickens are in no area.
   assert.deepEqual(['gatehouse_kills', 'watchtower_kills', 'ramparts_kills', 'kennels_kills'].map(have), [10_000, 10_000, 0, 0]);
@@ -206,11 +210,10 @@ test('counts: batches from /sync are applied once each, only to the tasks that n
   assert.equal(have('ramparts_act1'), 0); // Copper Bars smithed
   assert.equal(have('kitchen_act1'), 1_000); // Trout
   const kills = taskOf(view, 'gatehouse_kills');
-  assert.deepEqual(kills.top.map((t) => t.name), ['Member']);
   assert.deepEqual([kills.kind, kills.stat, kills.area, kills.ids.includes('MelvorBase:Golbin')], ['kill', KILLS, 'Golbin Forest', true]);
   // A task without `ids` counts everything its counter counts.
   await syncOf(member, { seq: 103, counts: { 'MelvorBase:HerbloreItemGained': { 'MelvorBase:FishingPotionP1A': 3, 'MelvorBase:MiningPotionP1A': 2 } } });
-  const brew = taskOf(await ok(owner, 'GET', g), 'brewery_act2');
+  const brew = taskOf(await ok(member, 'GET', g), 'brewery_act2');
   assert.deepEqual([brew.have, brew.ids], [5_000, undefined]);
 
   // Counts never overshoot.
@@ -220,19 +223,27 @@ test('counts: batches from /sync are applied once each, only to the tasks that n
   assert.equal(full.have, full.need);
 });
 
-test('counts go to every guild the player is in', async () => {
+test('a player has one set of progress, the same in every guild they are in and kept when they change guilds', async () => {
   const a = await guildOf();
   const { guild: second } = await ok(a.member, 'POST', '/guilds', { name: `Second ${randomBytes(4).toString('hex')}`, description: '' });
+  const g2 = `/guilds/${second.id}/grounds`;
   await syncOf(a.member, { seq: 5, counts: { [THEFTS]: { 'MelvorBase:Thug': 3 } } });
-  assert.equal(taskOf(await ok(a.owner, 'GET', a.g), 'moat_act2').have, 3_000);
-  assert.equal(taskOf(await ok(a.member, 'GET', `/guilds/${second.id}/grounds`), 'moat_act2').have, 3_000);
+  await give(a.member, g2, 'moat_fish', GROUPS.fish.base, 4);
+  for (const g of [a.g, g2]) {
+    const view = await ok(a.member, 'GET', g);
+    assert.deepEqual([taskOf(view, 'moat_act2').have, taskOf(view, 'moat_fish').have], [3_000, 4_000]);
+  }
+  assert.equal(taskOf(await ok(a.owner, 'GET', a.g), 'moat_act2').have, 0);
+  await ok(a.member, 'POST', `/guilds/${a.guild.id}/leave`);
+  assert.equal(taskOf(await ok(a.member, 'GET', g2), 'moat_act2').have, 3_000);
 });
 
-test('completing every task at a location gives the guild its bonus through /sync', async () => {
+test('completing every task at a location gives that player its bonus through /sync, once however many guilds they are in', async () => {
   const { owner, member, guild, g } = await guildOf();
+  const { guild: second } = await ok(owner, 'POST', '/guilds', { name: `Second ${randomBytes(4).toString('hex')}`, description: '' });
   await give(owner, g, 'moat_fish', GROUPS.fish.base, need('moat_fish'));
   await give(owner, g, 'moat_crops', GROUPS.crops.base, need('moat_crops'));
-  await syncOf(owner, {
+  const almost = await syncOf(owner, {
     seq: 1,
     counts: {
       [KILLS]: { 'MelvorBase:Chicken': 500, 'MelvorBase:GreenSlime': need('moat_kills') },
@@ -240,15 +251,52 @@ test('completing every task at a location gives the guild its bonus through /syn
       [THEFTS]: { 'MelvorBase:Thug': need('moat_act2') - 1 },
     },
   });
-  assert.deepEqual(guildIn(await syncOf(member), guild).bonuses, []);
+  assert.deepEqual(guildIn(almost, guild).bonuses, []);
   assert.equal(locations(await ok(owner, 'GET', g)).find((l) => l.id === 'moat').done, false);
 
-  // The sync that carries the last pickpocket already reports the bonus.
-  const done = await syncOf(member, { seq: 1, counts: { [THEFTS]: { 'MelvorBase:Thug': 1 } } });
-  assert.deepEqual(guildIn(done, guild).bonuses, [{ id: 'fishingSpeed', value: 2 }]);
-  assert.deepEqual(guildIn(await syncOf(owner), guild).bonuses, [{ id: 'fishingSpeed', value: 2 }]);
+  // The sync that carries the last pickpocket already reports the bonus, the same in each guild.
+  const done = await syncOf(owner, { seq: 2, counts: { [THEFTS]: { 'MelvorBase:Thug': 1 } } });
+  assert.deepEqual(done.guilds.map((x) => x.bonuses), [[{ id: 'fishingSpeed', value: 2 }], [{ id: 'fishingSpeed', value: 2 }]]);
+  assert.deepEqual(locations(await ok(owner, 'GET', `/guilds/${second.id}/grounds`)).filter((l) => l.done).map((l) => l.id), ['moat']);
+  // A guild mate did none of it and gets nothing.
+  assert.deepEqual(guildIn(await syncOf(member), guild).bonuses, []);
+  assert.equal(locations(await ok(member, 'GET', g)).some((l) => l.done), false);
+  // The bonus needs a guild: out of every guild there is nowhere for it to be reported.
+  await ok(owner, 'DELETE', `/guilds/${guild.id}`);
+  await ok(owner, 'DELETE', `/guilds/${second.id}`);
+  assert.deepEqual((await syncOf(owner)).guilds, []);
+});
+
+test('players from the time of shared guild progress start from what they contributed themselves', async () => {
+  const { owner, member, guild, g } = await guildOf();
+  const { guild: second } = await ok(owner, 'POST', '/guilds', { name: `Second ${randomBytes(4).toString('hex')}`, description: '' });
+  const db = client.db('groundstest');
+  const { ObjectId } = await import('mongodb');
+  const moat = TIERS[0].locations.find((l) => l.id === 'moat');
+  const all = Object.fromEntries(moat.tasks.map((t) => [t.id, t.need * 1000]));
+  // As 0.6.1 left it: the owner finished the Moat alone in one guild and gave more in another;
+  // the member gave a little. Counts were recorded in both of the owner's guilds.
+  await db.collection('groundsTotals').insertMany([
+    { guildId: new ObjectId(guild.id), playerId: owner.id, name: 'Owner', t: { ...all, gatehouse_logs: 30_000, gatehouse_kills: 7_000, old_task: 5 } },
+    { guildId: new ObjectId(second.id), playerId: owner.id, name: 'Owner', t: { gatehouse_logs: 12_000, gatehouse_kills: 9_000 } },
+    { guildId: new ObjectId(guild.id), playerId: member.id, name: 'Member', t: { gatehouse_logs: 2_000 } },
+  ]);
+  await db.collection('players').updateMany({ _id: { $in: [owner.id, member.id] } }, { $unset: { groundsSeeded: '', groundsRev: '', groundsDone: '' } });
+  await db.collection('groundsMine').deleteMany({ _id: { $in: [owner.id, member.id] } });
+
+  // A plain sync is enough to bring the bonus back.
+  const sync = await syncOf(owner);
+  assert.deepEqual(guildIn(sync, guild).bonuses, [{ id: 'fishingSpeed', value: 2 }]);
+  assert.ok(guildIn(sync, guild).groundsRev >= 1_000_000);
   const view = await ok(owner, 'GET', g);
   assert.deepEqual(locations(view).filter((l) => l.done).map((l) => l.id), ['moat']);
+  assert.equal(taskOf(view, 'gatehouse_logs').have, 42_000); // donations add up over guilds
+  assert.equal(taskOf(view, 'gatehouse_kills').have, 9_000); // counts were in both: the larger one
+  assert.equal(taskOf(await ok(member, 'GET', g), 'gatehouse_logs').have, 2_000);
+  // Only once: later progress is not replaced by it.
+  await give(owner, g, 'gatehouse_logs', LOGS[BASE], 1);
+  await syncOf(owner);
+  assert.equal(taskOf(await ok(owner, 'GET', g), 'gatehouse_logs').have, 43_000);
 });
 
 test('two finished locations with the same kind of bonus add up', async () => {
@@ -257,23 +305,19 @@ test('two finished locations with the same kind of bonus add up', async () => {
   assert.deepEqual(bonusesOf({}), []);
 });
 
-test('leaving keeps contributions; deleting your data removes them; disbanding removes the grounds', async () => {
+test('disbanding a guild keeps its members\' progress; deleting your data removes yours', async () => {
   const { owner, member, guild, g } = await guildOf();
   await give(member, g, 'kennels_bones', 'MelvorBase:Bone', 20);
   await give(owner, g, 'kennels_bones', 'MelvorBase:BigBone', 4);
-  await ok(member, 'POST', `/guilds/${guild.id}/leave`);
-  let bones = taskOf(await ok(owner, 'GET', g), 'kennels_bones');
-  assert.deepEqual(bones.top.map((t) => [t.name, t.amount]), [['Member', 20_000], ['Owner', 5_000]]);
+  const db = client.db('groundstest');
+  assert.equal((await db.collection('groundsMine').findOne({ _id: member.id })).p.kennels_bones, 20_000);
 
   await ok(member, 'DELETE', '/me');
-  bones = taskOf(await ok(owner, 'GET', g), 'kennels_bones');
-  assert.equal(bones.have, 25_000); // the guild keeps the progress
-  assert.deepEqual(bones.top.map((t) => t.name), ['Owner']);
+  assert.equal(await db.collection('groundsMine').countDocuments({ _id: member.id }), 0);
+  assert.equal(await db.collection('groundsGifts').countDocuments({ playerId: member.id }), 0);
 
-  const db = client.db('groundstest');
-  const docsBefore = await db.collection('grounds').countDocuments({});
   await ok(owner, 'DELETE', `/guilds/${guild.id}`);
-  assert.equal(await db.collection('grounds').countDocuments({}), docsBefore - 1);
-  assert.equal(await db.collection('groundsTotals').countDocuments({ playerId: { $in: [owner.id, member.id] } }), 0);
   await fails(404, 'guild_not_found', owner, 'GET', g);
+  const { guild: next } = await ok(owner, 'POST', '/guilds', { name: `Next ${randomBytes(4).toString('hex')}`, description: '' });
+  assert.equal(taskOf(await ok(owner, 'GET', `/guilds/${next.id}/grounds`), 'kennels_bones').have, 5_000);
 });

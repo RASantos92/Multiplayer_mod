@@ -1,19 +1,22 @@
 // Data access for Guild Grounds. Mixed into the main store (see store.js).
 //
-// grounds:       one document per guild, `p.<taskId>` = progress in thousandths of a unit.
-// groundsTotals: one document per guild and player, `t.<taskId>` = what that player contributed.
+// groundsMine:   one document per player, `p.<taskId>` = progress in thousandths of a unit.
 // groundsGifts:  one document per donation, keyed by the donor's nonce, so a donation sent twice
 //                (after a crash or a lost reply) is only counted once.
-// Also on the guild document: `groundsRev` (changes whenever progress does) and `groundsDone`
-// (ids of completed locations), so /sync can report both without another query.
+// Also on the player document: `groundsRev` (changes whenever progress does), `groundsDone` (ids of
+// completed locations) and `groundsSeeded`, so /sync can report them without another query.
+//
+// From the time progress was shared by a guild (up to 0.6.1), only read to start players off:
+// groundsTotals: one document per guild and player, `t.<taskId>` = what that player contributed.
+// grounds:       one document per guild; no longer used.
 
 const DAY = 24 * 60 * 60;
 const isDup = (e) => e?.code === 11000;
 
 export function createGroundsStore(db) {
-  const guilds = db.collection('guilds');
   const players = db.collection('players');
   const grounds = db.collection('grounds');
+  const mine = db.collection('groundsMine');
   const totals = db.collection('groundsTotals');
   const gifts = db.collection('groundsGifts');
 
@@ -25,19 +28,35 @@ export function createGroundsStore(db) {
       gifts.createIndex({ at: 1 }, { expireAfterSeconds: 30 * DAY }),
     ],
 
-    getGrounds: (guildId) => grounds.findOne({ _id: guildId }),
+    getMyGrounds: (playerId) => mine.findOne({ _id: playerId }),
+    groundsTotalsOf: (playerId) => totals.find({ playerId }).limit(20).toArray(),
+    /** Creates the player's progress document; does nothing if it is already there. */
+    async insertMyGrounds(playerId, p) {
+      try {
+        await mine.insertOne({ _id: playerId, p });
+      } catch (e) {
+        if (!isDup(e)) throw e;
+      }
+    },
+    /** Starts the change counter well above any a guild had, so every game reloads its view once. */
+    markGroundsSeeded: (playerId, done) =>
+      players.findOneAndUpdate(
+        { _id: playerId },
+        { $set: { groundsSeeded: true, groundsRev: 1_000_000, groundsDone: done } },
+        { returnDocument: 'after' },
+      ),
 
     /**
      * Adds progress to several tasks in one atomic update, never past a task's `need`.
      * `adds` is [{task, add, need}] in thousandths. Returns the progress as it was BEFORE (`{task: n}`),
      * so the caller can work out how much of each add was accepted.
      */
-    async addGroundsProgress(guildId, adds) {
+    async addMyGroundsProgress(playerId, adds) {
       const set = {};
       for (const { task, add, need } of adds) {
         set[`p.${task}`] = { $min: [need, { $add: [{ $ifNull: [`$p.${task}`, 0] }, add] }] };
       }
-      const op = () => grounds.findOneAndUpdate({ _id: guildId }, [{ $set: set }], { upsert: true, returnDocument: 'before' });
+      const op = () => mine.findOneAndUpdate({ _id: playerId }, [{ $set: set }], { upsert: true, returnDocument: 'before' });
       let before;
       try {
         before = await op();
@@ -48,19 +67,10 @@ export function createGroundsStore(db) {
       return before?.p ?? {};
     },
 
-    /** Records what a player contributed. `incs` is {task: thousandths}. */
-    creditGrounds: (guildId, playerId, name, incs) =>
-      totals.updateOne(
-        { guildId, playerId },
-        { $inc: Object.fromEntries(Object.entries(incs).map(([task, n]) => [`t.${task}`, n])), $set: { name } },
-        { upsert: true },
-      ),
-    groundsTotals: (guildId) => totals.find({ guildId }).limit(500).toArray(),
-
-    /** Marks the guild's grounds as changed and records completed locations. Returns the guild afterwards. */
-    bumpGrounds: (guildId, done) =>
-      guilds.findOneAndUpdate(
-        { _id: guildId },
+    /** Marks the player's grounds as changed and records completed locations. Returns the player afterwards. */
+    bumpMyGrounds: (playerId, done) =>
+      players.findOneAndUpdate(
+        { _id: playerId },
         { $inc: { groundsRev: 1 }, ...(done.length ? { $addToSet: { groundsDone: { $each: done } } } : {}) },
         { returnDocument: 'after' },
       ),
@@ -87,7 +97,15 @@ export function createGroundsStore(db) {
       return r.modifiedCount === 1;
     },
 
-    purgeGroundsOfGuild: (guildId) => Promise.all([grounds.deleteOne({ _id: guildId }), totals.deleteMany({ guildId })]),
-    purgeGroundsOfPlayer: (playerId) => Promise.all([totals.deleteMany({ playerId }), gifts.deleteMany({ playerId })]),
+    // What members gave to a disbanded guild stays until each of them has been started off with it.
+    purgeGroundsOfGuild: (guildId) => grounds.deleteOne({ _id: guildId }),
+    // Also for a ban, which keeps the player document: their finished locations go with their progress.
+    purgeGroundsOfPlayer: (playerId) =>
+      Promise.all([
+        mine.deleteOne({ _id: playerId }),
+        totals.deleteMany({ playerId }),
+        gifts.deleteMany({ playerId }),
+        players.updateOne({ _id: playerId }, { $set: { groundsDone: [] }, $inc: { groundsRev: 1 } }),
+      ]),
   };
 }

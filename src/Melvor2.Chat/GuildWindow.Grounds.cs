@@ -75,7 +75,7 @@ internal sealed partial class GuildWindow
         }
         _donateTask = null;
 
-        _page.AddChild(Text("Your guild works on these together. Finish all five tasks at a location and every member gets its bonus. "
+        _page.AddChild(Text("These are your own tasks. Finish all five at a location and you get its bonus while you are in a guild. Your progress is the same in every guild you are in. "
             + "Tasks without a Donate button count by themselves as you play, also while the game is closed, and you keep what you make. Donated items are gone for good."));
 
         // By default only the first tier that still has work is open; clicks are remembered while the game runs.
@@ -140,9 +140,7 @@ internal sealed partial class GuildWindow
 
     private void AddTaskRow(GridContainer table, GroundsService grounds, GroundsTask task)
     {
-        string givers = task.Top.Count == 0 ? "Nobody has contributed yet."
-            : "Top contributors: " + string.Join(", ", task.Top.Select(g => (g.Id == _service.SteamId ? "You" : g.Name) + " " + GroundsService.Amount(g.Amount)))
-              + (task.Mine > 0 && task.Top.All(g => g.Id != _service.SteamId) ? ". You " + GroundsService.Amount(task.Mine) : "") + ".";
+        string givers = task.Done ? "Done." : "Only what you do yourself counts.";
 
         Label text = Text(task.Text);
         text.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;

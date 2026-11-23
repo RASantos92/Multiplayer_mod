@@ -469,15 +469,17 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       const gids = memberships.map((m) => m.guild._id);
 
       // Guild Grounds counts (kills, laps, thieving) ride along; each numbered batch is applied once.
+      // Progress and bonuses are the player's own, and only apply while they are in a guild.
       let groundsAck = null;
+      let mine = self;
       if (body.grounds !== undefined) {
-        const counted = await grounds.applyCounts({ id: me, name: self.name }, gids, body.grounds);
+        const counted = await grounds.applyCounts(self, body.grounds);
         groundsAck = counted.ack;
-        for (const guild of counted.changed) {
-          const m = memberships.find((x) => String(x.guild._id) === String(guild._id));
-          if (m) m.guild = guild;
-        }
+        mine = counted.player;
+      } else if (gids.length && !self.groundsSeeded) {
+        mine = await grounds.ready(self);
       }
+      const myBonuses = bonusesOf(mine);
 
       // Chat comes from the player's guilds and, if they opted in, the tester chat.
       const channels = self.testers ? [...gids, TESTERS_ID] : gids;
@@ -521,8 +523,9 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
           name: guild.name,
           rank: rankOf(guild, member),
           marketRev: guild.marketRev ?? 0,
-          groundsRev: guild.groundsRev ?? 0,
-          bonuses: bonusesOf(guild),
+          // The same in every guild: the game takes the largest of each bonus, so nothing counts twice.
+          groundsRev: mine.groundsRev ?? 0,
+          bonuses: myBonuses,
           members: sortMembers(byGuild.get(String(guild._id))),
         })),
         claims,

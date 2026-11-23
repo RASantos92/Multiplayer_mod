@@ -22,7 +22,7 @@ internal sealed record GroundsLocation(string Id, string Name, string BonusId, s
 internal sealed record GroundsTier(string Name, List<GroundsLocation> Locations);
 
 /// <summary>
-/// Guild Grounds: shared guild tasks at locations, and the bonus each finished location gives.
+/// Guild Grounds: the player's own tasks at locations, and the bonus each finished location gives.
 ///
 ///   - Counting: each task that is done by playing names one of the game's lifetime counters (monsters killed,
 ///     courses completed, items made by a skill...) and, usually, which monsters, courses or items count. Every
