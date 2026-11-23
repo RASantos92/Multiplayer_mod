@@ -24,9 +24,36 @@ internal sealed partial class GuildWindow
 
     private bool _selling;
     private string _sellSearch = "";
+    /// <summary>The category tab chosen in the sell form: a bank tag id, Other, All, or null for the first tab.</summary>
+    private string? _sellCategory;
+    private const string OtherCategory = "#other";
+    private const string AllCategories = "#all";
     private string? _sellItemId;
     private int _sellQty = 1;
     private long _sellPrice;
+
+    /// <summary>Opens the window on the sell form for one bank item (from the button in the bank).</summary>
+    public void OpenSell(string itemId)
+    {
+        if (!GodotObject.IsInstanceValid(_backdrop)) return;
+        if (!IsOpen) Open();
+        if (_guildId == null || _service.Find(_guildId) == null)
+        {
+            _status.Text = "Join or create a guild to use its marketplace.";
+            return;
+        }
+        Game? game = ModEntry.CurrentGame();
+        Item? item = game == null ? null : BankAccess.FindItem(game, itemId);
+        _mode = Mode.Guild;
+        _selling = true;
+        _buyListingId = null;
+        _sellItemId = itemId;
+        _sellQty = 1;
+        _sellPrice = item == null ? 0 : BankAccess.ValueOf(item);
+        _marketButton.SetPressedNoSignal(true);
+        _backdrop.GetViewport()?.GuiReleaseFocus();
+        OpenMarketTab();
+    }
 
     private void OpenMarketTab()
     {
@@ -289,7 +316,8 @@ internal sealed partial class GuildWindow
         {
             _sellItemId = null;
             _page.AddChild(Heading("Sell an item"));
-            _page.AddChild(Text("Pick something from your bank. It leaves your bank when you list it and comes back if you cancel or it does not sell in 14 days."));
+            _page.AddChild(Text("Pick a category, then an item from your bank. It leaves your bank when you list it and comes back if you cancel or it does not sell in 14 days. "
+                + "You can also select an item in the bank and click Sell on guild market there."));
             _page.AddChild(Input(_sellSearch, "Search your bank", 40, value =>
             {
                 _sellSearch = value;
@@ -301,22 +329,70 @@ internal sealed partial class GuildWindow
             _page.AddChild(search);
 
             string filter = _sellSearch.Trim();
-            List<BankItem> matches = bank
-                .Where(b => MarketService.WhyNotSellable(b) == null)
-                .Where(b => filter.Length == 0 || BankAccess.Name(b.Item).Contains(filter, StringComparison.OrdinalIgnoreCase))
+            List<BankItem> sellable = bank.Where(b => MarketService.WhyNotSellable(b) == null).ToList();
+            if (sellable.Count == 0)
+            {
+                _page.AddChild(Text("Nothing in your bank can be sold here. Locked items and items with no gold value are left out."));
+                return;
+            }
+
+            // One tab per kind of item the game sorts the bank by (its bank tags), then the rest, then everything.
+            static IEnumerable<string> TagsOf(BankItem b) => b.Item.BankTags.Select(t => t.BankTag.Id).Distinct();
+            var tabs = sellable.SelectMany(b => b.Item.BankTags.Select(t => t.BankTag))
+                .GroupBy(t => t.Id)
+                .Select(g => (Id: g.Key, Name: g.First().DisplayName.Message, Icon: (Texture2D?)g.First().Icon, Count: sellable.Count(b => TagsOf(b).Contains(g.Key))))
+                .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            int untagged = sellable.Count(b => b.Item.BankTags.Count == 0);
+            if (untagged > 0) tabs.Add((OtherCategory, "Other", null, untagged));
+            tabs.Add((AllCategories, "All", null, sellable.Count));
+            if (_sellCategory == null || tabs.All(t => t.Id != _sellCategory)) _sellCategory = tabs[0].Id;
+
+            var strip = new HFlowContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+            strip.AddThemeConstantOverride("h_separation", 4);
+            strip.AddThemeConstantOverride("v_separation", 4);
+            var group = new ButtonGroup();
+            foreach (var tab in tabs)
+            {
+                string id = tab.Id;
+                Button button = TabButton(tab.Name + " (" + tab.Count + ")", group);
+                button.CustomMinimumSize = new Vector2(0, 32);
+                button.AutoTranslateMode = Node.AutoTranslateModeEnum.Disabled;
+                if (tab.Icon != null)
+                {
+                    button.Icon = tab.Icon;
+                    button.ExpandIcon = true;
+                    button.AddThemeConstantOverride("icon_max_width", 20);
+                }
+                button.SetPressedNoSignal(filter.Length == 0 && id == _sellCategory);
+                button.Pressed += () =>
+                {
+                    _sellCategory = id;
+                    _sellSearch = "";
+                    RebuildMarket();
+                };
+                strip.AddChild(button);
+            }
+            _page.AddChild(strip);
+
+            // A search looks in every category.
+            string category = _sellCategory;
+            List<BankItem> matches = sellable
+                .Where(b => filter.Length > 0 ? BankAccess.Name(b.Item).Contains(filter, StringComparison.OrdinalIgnoreCase)
+                    : category == AllCategories || (category == OtherCategory ? b.Item.BankTags.Count == 0 : TagsOf(b).Contains(category)))
                 .OrderBy(b => BankAccess.Name(b.Item))
                 .ToList();
+            if (filter.Length > 0) _page.AddChild(Text("Search results for \"" + filter + "\" from every category. Click a category to clear the search."));
             if (matches.Count == 0)
             {
-                _page.AddChild(Text(filter.Length == 0 ? "Nothing in your bank can be sold here. Locked items and items with no gold value are left out."
-                    : "Nothing in your bank matches \"" + filter + "\"."));
+                _page.AddChild(Text("Nothing in your bank matches \"" + filter + "\"."));
                 return;
             }
 
             var grid = new GridContainer { Columns = 2, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
             grid.AddThemeConstantOverride("h_separation", 8);
             grid.AddThemeConstantOverride("v_separation", 4);
-            foreach (BankItem entry in matches.Take(60))
+            foreach (BankItem entry in matches.Take(120))
             {
                 string id = entry.Item.Id;
                 long value = entry.Value;
@@ -337,7 +413,7 @@ internal sealed partial class GuildWindow
                 grid.AddChild(pick);
             }
             _page.AddChild(grid);
-            if (matches.Count > 60) _page.AddChild(Text("Showing 60 of " + matches.Count + ". Search to narrow it down."));
+            if (matches.Count > 120) _page.AddChild(Text("Showing 120 of " + matches.Count + ". Pick a category or search to narrow it down."));
             return;
         }
 

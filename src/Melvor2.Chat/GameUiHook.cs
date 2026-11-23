@@ -24,6 +24,7 @@ internal sealed class GameUiHook
     private GuildWindow? _guild;
     private bool _escDown;
     private CombatTabHook? _combatTab;
+    private BankSellHook? _bankSell;
 
     public bool GuildWindowOpen => _guild is { IsOpen: true };
 
@@ -71,10 +72,24 @@ internal sealed class GameUiHook
                 ModEntry.Log("Players tab disabled after error: " + e);
             }
         }
+        // So does the bank page.
+        if (_bankSell != null && view.GetInstanceId() == _viewId)
+        {
+            try
+            {
+                _bankSell.Tick(view);
+            }
+            catch (Exception e)
+            {
+                _bankSell = null;
+                ModEntry.Log("Bank sell button disabled after error: " + e);
+            }
+        }
         if (view.GetInstanceId() == _viewId) return;
 
         _viewId = view.GetInstanceId();
         _combatTab = new CombatTabHook(_guilds);
+        _bankSell = new BankSellHook(_guilds, itemId => _guild?.OpenSell(itemId));
         Try("chat button", () => AddChatButton(view));
         NativeStyle? style = null;
         Try("native style", () => style = new NativeStyle(view));
