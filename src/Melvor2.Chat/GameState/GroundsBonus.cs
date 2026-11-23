@@ -93,7 +93,6 @@ internal sealed class GroundsBonus
         ["Herblore"] = ("HerbloreAction", "Action", Array.Empty<string>(), "DoublingChance"),
         ["Farming"] = ("FarmingAction", "Passive", new[] { "PercentInterval" }, "DoublingChance"),
         ["Ranching"] = ("RanchingAction", "Passive", new[] { "PercentProductInterval" }, "DoublingChance"),
-        ["Agility"] = ("AgilityAction", "Action", new[] { "PercentInterval" }, null),
         ["Thieving"] = ("ThievingAction", "Action", new[] { "PercentInterval" }, "DoublingChance"),
         ["Hunting"] = ("HuntingAction", "Action", Array.Empty<string>(), "DoublingChance"),
     };

@@ -100,7 +100,8 @@ test('view: members see every location with empty progress; outsiders do not', a
   const { owner, outsider, g } = await guildOf();
   const view = await ok(owner, 'GET', g);
   assert.equal(view.unit, 1000);
-  assert.equal(locations(view).length, 5);
+  assert.equal(locations(view).length, 28);
+  assert.deepEqual(view.tiers.map((x) => x.locations.length), [5, 10, 6, 7]);
   const logs = taskOf(view, 'gatehouse_logs');
   assert.deepEqual([logs.kind, logs.need, logs.have, logs.mine, logs.top.length], ['donate', need('gatehouse_logs') * 1000, 0, 0, 0]);
   assert.deepEqual(logs.items.find((i) => i.item === GROUPS.logs.base), { item: GROUPS.logs.base, worth: 1000 });
@@ -179,7 +180,7 @@ test('counts: batches from /sync are applied once each, to every matching task',
   assert.equal((await syncOf(member)).groundsAck, undefined);
 
   const view = await ok(owner, 'GET', g);
-  for (const loc of locations(view)) {
+  for (const loc of view.tiers[0].locations) {
     const kills = loc.tasks.find((t) => t.kind === 'kill');
     assert.equal(kills.have, kills.enemies ? 0 : Math.min(kills.need, 10_000), kills.id); // chickens and cows are not on any list
     assert.equal(loc.tasks.find((t) => t.kind === 'lap').have, 2_000);
@@ -215,6 +216,12 @@ test('completing every task at a location gives the guild its bonus through /syn
   assert.deepEqual(guildIn(await syncOf(owner), guild).bonuses, [{ id: 'fishingSpeed', value: 2 }]);
   const view = await ok(owner, 'GET', g);
   assert.deepEqual(locations(view).filter((l) => l.done).map((l) => l.id), ['moat']);
+});
+
+test('two finished locations with the same kind of bonus add up', async () => {
+  const { bonusesOf } = await import('../src/grounds.js');
+  assert.deepEqual(bonusesOf({ groundsDone: ['gatehouse', 'armory', 'moat', 'nope'] }), [{ id: 'protection', value: 5 }, { id: 'fishingSpeed', value: 2 }]);
+  assert.deepEqual(bonusesOf({}), []);
 });
 
 test('leaving keeps contributions; deleting your data removes them; disbanding removes the grounds', async () => {
