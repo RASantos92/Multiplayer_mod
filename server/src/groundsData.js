@@ -14,24 +14,34 @@
 
 export const STEP = 1.25;
 
+// Items are listed in the order the game unlocks them (level needed to gather them).
 export const GROUPS = {
   logs: {
     base: 'MelvorBase:WillowLog',
-    items: ['MelvorBase:NormalLog', 'MelvorBase:OakLog', 'MelvorBase:WillowLog', 'MelvorBase:TeakLog', 'MelvorBase:MapleLog'],
+    items: ['MelvorBase:NormalLog', 'MelvorBase:OakLog', 'MelvorBase:WillowLog', 'MelvorBase:TeakLog', 'MelvorBase:MapleLog', 'MelvorBase:MahoganyLog', 'MelvorBase:YewLog', 'MelvorBase:MagicLog', 'MelvorBase:AshenLog', 'MelvorBase:HardOakLog', 'MelvorBase:RedwoodLog'],
   },
   stone: {
     base: 'MelvorBase:IronOre',
-    items: ['MelvorBase:Stone', 'MelvorBase:CopperOre', 'MelvorBase:IronOre', 'MelvorBase:Coal', 'MelvorBase:MithrilOre', 'MelvorBase:AdamantiteOre', 'MelvorBase:RuniteOre'],
+    items: ['MelvorBase:Stone', 'MelvorBase:CopperOre', 'MelvorBase:IronOre', 'MelvorBase:SilverOre', 'MelvorBase:Coal', 'MelvorBase:MithrilOre', 'MelvorBase:GoldOre', 'MelvorBase:AdamantiteOre', 'MelvorBase:RuniteOre', 'MelvorBase:DawnsteelOre', 'MelvorBase:MeteoriteOre', 'MelvorBase:DragoniteOre'],
   },
   fish: {
     base: 'MelvorBase:RawHerring',
-    items: ['MelvorBase:RawShrimp', 'MelvorBase:RawSardine', 'MelvorBase:RawHerring', 'MelvorBase:RawPerch', 'MelvorBase:RawTrout', 'MelvorBase:RawSalmon', 'MelvorBase:RawPike'],
+    items: ['MelvorBase:RawShrimp', 'MelvorBase:RawSardine', 'MelvorBase:RawHerring', 'MelvorBase:RawPerch', 'MelvorBase:RawTrout', 'MelvorBase:RawMackerel', 'MelvorBase:RawPike', 'MelvorBase:RawMoonlightMinnow', 'MelvorBase:RawSalmon', 'MelvorBase:RawLobster', 'MelvorBase:RawGlowfin', 'MelvorBase:RawSeaBream', 'MelvorBase:RawCod', 'MelvorBase:RawSeaBass', 'MelvorBase:RawLionfish', 'MelvorBase:RawStripedMullet', 'MelvorBase:RawGlowingJellyfish', 'MelvorBase:RawTuna', 'MelvorBase:RawShark', 'MelvorBase:RawGlowingSquid', 'MelvorBase:RawGiantEel', 'MelvorBase:RawMantaRay', 'MelvorBase:RawWhale'],
   },
+  crops: {
+    base: 'MelvorBase:Lettuce',
+    items: ['MelvorBase:Potato', 'MelvorBase:Onion', 'MelvorBase:Lettuce', 'MelvorBase:Strawberry', 'MelvorBase:Garlic', 'MelvorBase:Corn', 'MelvorBase:Nightreed', 'MelvorBase:Watermelon', 'MelvorBase:SnapeGrass', 'MelvorBase:Tomato', 'MelvorBase:Carrot', 'MelvorBase:Pumpkin', 'MelvorBase:Cabbage', 'MelvorBase:Cauliflower'],
+  },
+  straw: { base: 'MelvorBase:Wheat', items: ['MelvorBase:Wheat', 'MelvorBase:Sugarcane'] },
   bones: { base: 'MelvorBase:Bone', items: ['MelvorBase:Bone', 'MelvorBase:BigBone'] },
   feathers: { base: 'MelvorBase:Feathers', items: ['MelvorBase:Feathers'] },
   clay: { base: 'MelvorBase:Clay', items: ['MelvorBase:Clay'] },
-  meat: { base: 'MelvorBase:RawBeef', items: ['MelvorBase:RawMeat', 'MelvorBase:RawBeef', 'MelvorBase:RawChicken'] },
 };
+
+// Monsters that live in or by water: Crescent Lake, Glowing Depths, Sea Cliffside, Shipwreck Isles, Drowned Abyss, and the Toxic Bog's fish.
+const WATER = ['MelvorBase:Spitterfish', 'MelvorBase:Sailfish', 'MelvorBase:NightfangFish', 'MelvorBase:Culfish', 'MelvorBase:BlightedTorfish', 'MelvorBase:GlowingJellyfish', 'MelvorBase:GlowingLurker', 'MelvorBase:Glowsquid', 'MelvorBase:GlowingEel', 'MelvorBase:HypnoticGlowsquid', 'MelvorBase:SeaGriffin', 'MelvorBase:SeaPelican', 'MelvorBase:SeaGullwing', 'MelvorBase:SeaPegasus', 'MelvorBase:SeaDrake', 'MelvorBase:DrownedCrewman', 'MelvorBase:DrownedRifleman', 'MelvorBase:DrownedPossessor', 'MelvorBase:DrownedQuartermaster', 'MelvorBase:DrownedPirateCaptain', 'MelvorBase:DrownedOne', 'MelvorBase:DrownedVessel', 'MelvorBase:DrownedFlayer', 'MelvorBase:Krakeling', 'MelvorBase:DrownedOvermind', 'MelvorBase:ToxicRazorfish'];
+// Animals: the Corrupted Farmlands' livestock, wolves, stags, boars, hounds and the Storm Valley's cats.
+const BEASTS = ['MelvorBase:GiantChicken', 'MelvorBase:MagicCow', 'MelvorBase:EnragedBoar', 'MelvorBase:Wolf', 'MelvorBase:DireWolf', 'MelvorBase:SavageDireWolf', 'MelvorBase:SpiritStag', 'MelvorBase:BloodHound', 'MelvorBase:StormLynx', 'MelvorBase:StormFang', 'MelvorBase:StormBeast'];
 
 const donate = (id, text, need, group) => ({ id, kind: 'donate', text, need, group });
 const kill = (id, text, need, enemies) => ({ id, kind: 'kill', text, need, ...(enemies ? { enemies } : {}) });
@@ -58,7 +68,7 @@ export const TIERS = [
       {
         id: 'watchtower',
         name: 'Watchtower',
-        bonus: { id: 'accuracy', value: 2, text: '+2% accuracy rating' },
+        bonus: { id: 'rangedAccuracy', value: 2, text: '+2% ranged accuracy rating' },
         tasks: [
           donate('watchtower_logs', 'Donate logs for scaffolding', 400, 'logs'),
           donate('watchtower_feathers', 'Donate feathers from the roost', 200, 'feathers'),
@@ -85,8 +95,8 @@ export const TIERS = [
         bonus: { id: 'fishingSpeed', value: 2, text: 'Fishing 2% faster' },
         tasks: [
           donate('moat_fish', 'Donate raw fish to stock the moat', 300, 'fish'),
-          donate('moat_logs', 'Donate logs for the drawbridge', 250, 'logs'),
-          kill('moat_kills', 'Defeat monsters by the water', 60),
+          donate('moat_crops', 'Donate crops and reeds from the bank', 250, 'crops'),
+          kill('moat_kills', 'Defeat water monsters (Crescent Lake and other waters)', 60, WATER),
           lap('moat_laps', 'Cross the moat (Agility laps)', 20),
           steal('moat_steals', 'Steal mooring ropes (successful Thieving actions)', 30),
         ],
@@ -97,8 +107,8 @@ export const TIERS = [
         bonus: { id: 'ranchingSpeed', value: 3, text: 'Ranching 3% faster' },
         tasks: [
           donate('kennels_bones', 'Donate bones for the yard', 200, 'bones'),
-          donate('kennels_meat', 'Donate raw meat for the hounds', 150, 'meat'),
-          kill('kennels_kills', 'Defeat beasts in the run', 60),
+          donate('kennels_straw', 'Donate wheat or sugarcane for bedding', 150, 'straw'),
+          kill('kennels_kills', 'Defeat beasts (farm animals, wolves, stags, hounds)', 60, BEASTS),
           lap('kennels_laps', 'Hound-handling drills (Agility laps)', 25),
           steal('kennels_steals', 'Steal dog treats (successful Thieving actions)', 40),
         ],

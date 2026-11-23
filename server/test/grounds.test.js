@@ -178,13 +178,14 @@ test('counts: batches from /sync are applied once each, to every matching task',
   const view = await ok(owner, 'GET', g);
   for (const loc of locations(view)) {
     const kills = loc.tasks.find((t) => t.kind === 'kill');
-    assert.equal(kills.have, Math.min(kills.need, 10_000), kills.id);
+    assert.equal(kills.have, kills.enemies ? 0 : Math.min(kills.need, 10_000), kills.id); // chickens and cows are not on any list
     assert.equal(loc.tasks.find((t) => t.kind === 'lap').have, 2_000);
     assert.equal(loc.tasks.find((t) => t.kind === 'steal').have, 4_000);
-    assert.deepEqual(kills.top.map((t) => t.name), ['Member']);
+    assert.deepEqual(kills.top.map((t) => t.name), kills.enemies ? [] : ['Member']);
   }
   // Counts never overshoot.
-  await syncOf(owner, { seq: 1, kills: { 'MelvorBase:Chicken': 100_000 } });
+  await syncOf(owner, { seq: 1, kills: { 'MelvorBase:Chicken': 100_000, 'MelvorBase:Wolf': 5 } });
+  assert.equal(taskOf(await ok(owner, 'GET', g), 'kennels_kills').have, 5_000); // wolves are beasts
   const kills = taskOf(await ok(owner, 'GET', g), 'gatehouse_kills');
   assert.equal(kills.have, kills.need);
 });
@@ -200,8 +201,8 @@ test('counts go to every guild the player is in', async () => {
 test('completing every task at a location gives the guild its bonus through /sync', async () => {
   const { owner, member, guild, g } = await guildOf();
   await give(owner, g, 'moat_fish', GROUPS.fish.base, 300);
-  await give(owner, g, 'moat_logs', LOGS[BASE], 250);
-  await syncOf(owner, { seq: 1, kills: { 'MelvorBase:Chicken': 60 }, laps: { 'MelvorBase:SomeCourse': 19 }, steals: { 'MelvorBase:Man': 30 } });
+  await give(owner, g, 'moat_crops', GROUPS.crops.base, 250);
+  await syncOf(owner, { seq: 1, kills: { 'MelvorBase:Chicken': 500, 'MelvorBase:Sailfish': 60 }, laps: { 'MelvorBase:SomeCourse': 19 }, steals: { 'MelvorBase:Man': 30 } });
   assert.deepEqual(guildIn(await syncOf(member), guild).bonuses, []);
   assert.equal(locations(await ok(owner, 'GET', g)).find((l) => l.id === 'moat').done, false);
 
