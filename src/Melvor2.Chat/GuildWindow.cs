@@ -350,6 +350,15 @@ internal sealed partial class GuildWindow
         _left.AddChild(Action("Create Guild", "TexturedActionButtonGreen8x", () => { _mode = Mode.Create; Rebuild(); }));
         _left.AddChild(Action("Find Guild", "TexturedButton8x", () => { _mode = Mode.Find; Rebuild(); }));
 
+        Button testers = _service.Testers
+            ? Action("Leave tester chat", "TexturedButton8x", () => _service.SetTesters(false))
+            : Action("Join tester chat", "TexturedButton8x", () => _service.SetTesters(true));
+        testers.TooltipText = _service.Testers
+            ? "Stop seeing the \"Testers and bug reports\" channel in chat. What you already wrote there stays."
+            : "Adds a \"Testers and bug reports\" channel to the chat window (F8), shared by everyone who joins it, in any guild or none. "
+              + "Use it to talk about the mod and report bugs. Others see what you write there with your Steam name. "
+              + "Messages are deleted after 14 days. You can leave at any time.";
+        _leftFooter.AddChild(testers);
         _leftFooter.AddChild(Confirm("Delete my guild data", "TexturedButtonCancel8x", _service.DeleteMyData));
     }
 

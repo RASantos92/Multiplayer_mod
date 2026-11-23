@@ -182,12 +182,17 @@ internal sealed class ChatPanel
             _channelIds.Add(guild.Id);
             _channels.AddItem("Guild: " + guild.Name);
         }
+        if (_guilds.Testers)
+        {
+            _channelIds.Add(GuildService.TestersChannel);
+            _channels.AddItem("Testers and bug reports");
+        }
         _channels.Visible = _channelIds.Count > 1;
 
         int index = _channelIds.IndexOf(_channel);
         if (index < 0)
         {
-            // The guild we were looking at is gone (left, kicked or disbanded).
+            // The channel we were looking at is gone (left, kicked, disbanded, or left the tester chat).
             SwitchChannel(null);
             index = 0;
         }
@@ -280,6 +285,12 @@ internal sealed class ChatPanel
         if (!friends)
         {
             _input.Editable = true;
+            if (_channel == GuildService.TestersChannel)
+            {
+                _input.PlaceholderText = "Talk about the mod or report a bug";
+                _status.Text = "Everyone who joined the tester chat can read this, with your Steam name.";
+                return;
+            }
             GuildInfo? guild = _guilds?.Find(_channel);
             int online = 0;
             int total = 0;

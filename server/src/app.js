@@ -231,9 +231,13 @@ const guildOut = (g, extra = {}) => ({
 const statusOut = (s) =>
   s ? { skill: s.skill, level: s.level, at: ms(s.at), ...(s.action ? { action: s.action } : {}), ...(s.combat ? { combat: s.combat } : {}) } : null;
 const profileOut = (p) => (p ? { skills: p.skills, gear: p.gear, updatedAt: ms(p.updatedAt) } : null);
+// The tester chat is one channel shared by every player who opted in. Its messages are stored like guild
+// messages, under this fixed id, and reach players as `guildId: 'testers'`.
+export const TESTERS_CHANNEL = 'testers';
+const TESTERS_ID = new ObjectId('000000000000000000000001');
 const messageOut = (m) => ({
   id: String(m._id),
-  guildId: String(m.guildId),
+  guildId: TESTERS_ID.equals(m.guildId) ? TESTERS_CHANNEL : String(m.guildId),
   playerId: m.playerId,
   name: m.name,
   body: m.body,
@@ -401,6 +405,7 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       const [memberships, reqs] = await Promise.all([store.membershipsOf(me), store.requestsOf(me)]);
       return {
         player: { id: me, name: player.name },
+        testers: player.testers === true,
         guilds: memberships.map(({ member, guild }) => guildOut(guild, { rank: rankOf(guild, member) })),
         invites: reqs.filter((r) => r.kind === 'invite').map(inviteOut),
         requests: reqs.filter((r) => r.kind === 'request').map((r) => ({ guildId: String(r.guildId), guildName: r.guildName, at: ms(r.at) })),
@@ -474,11 +479,13 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
         }
       }
 
+      // Chat comes from the player's guilds and, if they opted in, the tester chat.
+      const channels = self.testers ? [...gids, TESTERS_ID] : gids;
       const [roster, fetched, reqs] = await Promise.all([
         store.rosters(gids),
         since
-          ? store.messagesSince(gids, new Date(since.t - L.syncOverlapMs), L.syncMaxMessages + since.ids.size)
-          : store.latestMessages(gids, L.syncInitialMessages),
+          ? store.messagesSince(channels, new Date(since.t - L.syncOverlapMs), L.syncMaxMessages + since.ids.size)
+          : store.latestMessages(channels, L.syncInitialMessages),
         store.requestsOf(me),
       ]);
       await market.sweep();
@@ -519,6 +526,7 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
           members: sortMembers(byGuild.get(String(guild._id))),
         })),
         claims,
+        testers: self.testers === true,
         ...(groundsAck == null ? {} : { groundsAck }),
         messages: fresh.map(messageOut),
         invites: reqs.filter((r) => r.kind === 'invite').map(inviteOut),
@@ -593,7 +601,8 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       await adminAuth(ctx);
       const t = now();
       const since = (msAgo) => store.countPlayers({ banned: { $ne: true }, lastSeen: { $gte: new Date(t - msAgo) } });
-      const [players, banned, online, day, week, guilds] = await Promise.all([
+      const [testers, players, banned, online, day, week, guilds] = await Promise.all([
+        store.countPlayers({ banned: { $ne: true }, testers: true }),
         store.countPlayers({ banned: { $ne: true } }),
         store.countPlayers({ banned: true }),
         since(5 * 60_000),
@@ -602,7 +611,7 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
         store.countGuilds(),
       ]);
       const registration = maxPlayers > 0 && players >= maxPlayers ? 'full' : registerCodes.length ? 'code' : 'open';
-      return { players, banned, online, day, week, guilds, maxPlayers: maxPlayers || null, registration };
+      return { players, banned, online, day, week, guilds, testers, maxPlayers: maxPlayers || null, registration };
     },
 
     // Finds players by part of their name, or one player by Steam ID, with the guilds they are in.
@@ -823,6 +832,22 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       return reply(201, { message: messageOut({ ...doc, _id: id }) });
     },
 
+    // Opt in to, or out of, the tester chat: one channel for everyone who wants to talk about the mod.
+    async setTesters({ me, body }) {
+      if (typeof body.on !== 'boolean') throw bad('invalid_body', '"on" must be true or false');
+      await store.setTesters(me, body.on);
+      return { testers: body.on };
+    },
+
+    async postTesterMessage({ me, player, body }) {
+      if (player.testers !== true) throw new HttpError(403, 'not_tester', 'Join the tester chat first');
+      const text = vMessageBody(body.body);
+      await rate(me, 'message');
+      const doc = { guildId: TESTERS_ID, playerId: me, name: player.name, body: text, at: new Date(now()) };
+      const id = await store.insertMessage(doc);
+      return reply(201, { message: messageOut({ ...doc, _id: id }) });
+    },
+
     async history({ me, params }) {
       const ctx = await guildCtx(params.id, me);
       if (!ctx.member) throw new HttpError(403, 'not_member', 'You are not a member of this guild');
@@ -843,6 +868,8 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
     ['POST', 'admin/find-player', h.adminFindPlayer, { auth: false }],
     ['POST', 'admin/stats', h.adminStats, { auth: false }],
     ['GET', 'me', h.me],
+    ['POST', 'testers', h.setTesters],
+    ['POST', 'testers/messages', h.postTesterMessage],
     ['DELETE', 'me', h.deleteMe],
     ['PUT', 'me/profile', h.putProfile],
     ['GET', 'players/:id/profile', h.getProfile],

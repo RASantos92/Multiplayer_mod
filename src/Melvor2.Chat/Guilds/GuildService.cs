@@ -88,6 +88,12 @@ internal sealed class GuildService
     public bool SteamReady => _steamId.Length > 0;
     public bool Enabled => _identity != null;
     public bool Busy { get; private set; }
+
+    /// <summary>The id tester chat messages arrive under, in place of a guild id.</summary>
+    public const string TestersChannel = "testers";
+
+    /// <summary>True once the player has opted in to the tester chat (the server remembers it).</summary>
+    public bool Testers { get; private set; }
     public string SteamId => _steamId;
 
     /// <summary>
@@ -409,9 +415,37 @@ internal sealed class GuildService
     public void Transfer(string guildId, string playerId) =>
         Run("POST", $"/guilds/{guildId}/transfer", Json.Obj(w => w.WriteString("playerId", playerId)), "Ownership transferred.");
 
+    /// <summary>
+    /// Joins or leaves the tester chat: one channel shared by everyone who opted in, for talking about the mod
+    /// and reporting bugs. Nothing is sent to or read from it until the player joins.
+    /// </summary>
+    public void SetTesters(bool on)
+    {
+        if (!Enabled) return;
+        GuildApi.Post("/testers", Json.Obj(w => w.WriteBoolean("on", on)), result =>
+        {
+            if (!result.Ok)
+            {
+                Notice?.Invoke(result.Status == 404 ? "The guild server does not have a tester chat yet." : result.ErrorMessage);
+                return;
+            }
+            Testers = on;
+            if (!on) Lines.Remove(TestersChannel);
+            Notice?.Invoke(on
+                ? "You joined the tester chat. Open chat (F8) and pick \"Testers and bug reports\"."
+                : "You left the tester chat.");
+            // Ask again from the start so the recent tester messages arrive.
+            _cursor = null;
+            _signature = "";
+            RaiseIfChanged();
+            Sync();
+        });
+    }
+
     public void SendMessage(string guildId, string text)
     {
-        GuildApi.Post($"/guilds/{guildId}/messages", Json.Obj(w => w.WriteString("body", text)), result =>
+        string path = guildId == TestersChannel ? "/testers/messages" : $"/guilds/{guildId}/messages";
+        GuildApi.Post(path, Json.Obj(w => w.WriteString("body", text)), result =>
         {
             if (!result.Ok)
             {
@@ -463,6 +497,7 @@ internal sealed class GuildService
                 if (result.Status == 401) Notice?.Invoke("The guild server does not recognise this PC's key.");
                 return;
             }
+            Testers = IsTrue(result.Body, "testers");
             Guilds.Clear();
             foreach (JsonElement g in result.Body.Items("guilds"))
             {
@@ -572,6 +607,11 @@ internal sealed class GuildService
             }
             if (seen.Count != Guilds.Count) membershipChanged = true;
 
+            if (result.Body.TryGetProperty("testers", out _) && IsTrue(result.Body, "testers") != Testers)
+            {
+                Testers = !Testers;
+                membershipChanged = true;
+            }
             foreach (JsonElement message in result.Body.Items("messages")) AddLine(message);
             ReadInvites(result.Body);
 
@@ -590,6 +630,9 @@ internal sealed class GuildService
             Invites.Add(new InviteInfo(i.Str("guildId"), i.Str("guildName"), i.Str("byName")));
         }
     }
+
+    private static bool IsTrue(JsonElement body, string name) =>
+        body.ValueKind == JsonValueKind.Object && body.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.True;
 
     private void AddLine(JsonElement message)
     {
@@ -622,6 +665,7 @@ internal sealed class GuildService
             if (SentInvites.TryGetValue(g.Id, out List<PendingInfo>? invites)) sb.Append('I').AppendJoin(',', invites.Select(r => r.PlayerId + r.Name));
             sb.Append('\n');
         }
+        sb.Append("testers:").Append(Testers);
         sb.Append("inv:").AppendJoin(',', Invites.Select(i => i.GuildId));
         sb.Append("req:").AppendJoin(',', MyRequests.Select(r => r.GuildId));
 

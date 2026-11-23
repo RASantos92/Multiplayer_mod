@@ -83,6 +83,7 @@ switch (command) {
     const cap = body.maxPlayers ? ` of ${body.maxPlayers}` : '';
     console.log(`Players: ${body.players}${cap}${body.banned ? ` (plus ${body.banned} banned)` : ''}, in ${body.guilds} guilds`);
     console.log(`Online in the last 5 minutes: ${body.online}.  Played in the last day: ${body.day}.  In the last week: ${body.week}.`);
+    if (body.testers !== undefined) console.log(`In the tester chat: ${body.testers}.`);
     console.log({
       full: 'New players: CLOSED. The player limit (MAX_PLAYERS) is reached.',
       code: body.maxPlayers

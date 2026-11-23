@@ -86,6 +86,8 @@ export function createStore(db) {
     /** Authenticates and updates in one round trip. Returns the updated player or null. */
     touchPlayer: (id, keyHash, set) =>
       players.findOneAndUpdate({ _id: id, keyHash, banned: { $ne: true } }, { $set: set }, { returnDocument: 'after' }),
+    /** Opts a player in to, or out of, the tester chat. */
+    setTesters: (id, on) => players.updateOne({ _id: id }, on ? { $set: { testers: true } } : { $unset: { testers: '' } }),
     setBanned: (id, banned) => players.updateOne({ _id: id }, banned ? { $set: { banned: true, status: null } } : { $unset: { banned: '' } }),
     findPlayersByName: (q, limit) =>
       players.find({ name: { $regex: escapeRegex(q), $options: 'i' } }).sort({ lastSeen: -1 }).limit(limit).toArray(),
