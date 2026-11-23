@@ -1,5 +1,6 @@
 using GamesByMalcs.Melvor2;
 using GamesByMalcs.Melvor2.Data.Items;
+using GamesByMalcs.Melvor2.GameMenus.Pages;
 using Godot;
 using Melvor2.Chat.GameState;
 using Melvor2.Chat.Guilds;
@@ -185,6 +186,17 @@ internal sealed partial class GuildWindow
             donate.Disabled = grounds.Busy;
             table.AddChild(donate);
         }
+        else if (!task.Done && task.Stat.Length > 0)
+        {
+            string stat = task.Stat;
+            Button travel = Action("Travel", "TexturedButton8x", () => Travel(stat));
+            travel.AddThemeFontSizeOverride("font_size", 14);
+            travel.CustomMinimumSize = new Vector2(84, 24);
+            travel.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+            travel.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+            travel.TooltipText = "Go to the page where this is done. It does not start or stop anything.";
+            table.AddChild(travel);
+        }
         else
         {
             Label state = Short(task.Done ? "Done" : "");
@@ -193,6 +205,41 @@ internal sealed partial class GuildWindow
             state.Modulate = s_green;
             table.AddChild(state);
         }
+    }
+
+    /// <summary>
+    /// Opens the game page of the skill a task is counted by, the same way clicking it in the sidebar does,
+    /// and closes the Guild window. The game's counters are named after the skill ("SmithingItemGained",
+    /// "CombatEnemyKilled", "BankItemBuried"), which is how the page is found.
+    /// </summary>
+    private void Travel(string stat)
+    {
+        Game? game = ModEntry.CurrentGame();
+        if (game == null)
+        {
+            OnNotice("Not available right now.");
+            return;
+        }
+        string counter = LocalId(stat);
+        PageNavigationOption? best = null;
+        foreach (PageNavigationOption option in game.Layout.Sidebar.Options.Concat(game.Layout.Sidebar.LegacyOptions))
+        {
+            string? skill = option.Entity == null ? null : LocalId(option.Entity.Id);
+            if (option.Page == null || string.IsNullOrEmpty(skill) || !counter.StartsWith(skill, StringComparison.Ordinal)) continue;
+            if (best == null || skill.Length > LocalId(best.Entity!.Id).Length) best = option;
+        }
+        if (best?.Page == null)
+        {
+            OnNotice("There is no page to go to for this task.");
+            return;
+        }
+        if (!best.Requirements.AreMet)
+        {
+            OnNotice("You have not unlocked " + best.DisplayName.Message + " yet.");
+            return;
+        }
+        Close();
+        _gameView.SetCurrentPage(best.Page);
     }
 
     private void BuildDonate(Game game, GuildInfo guild, GroundsService grounds, GroundsTask task)
