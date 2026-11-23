@@ -278,6 +278,8 @@ internal sealed class CombatTabHook
         }
     }
 
+    private static string Amount(double value) => value.ToString(value < 10 ? "0.#" : "0");
+
     private void Update(PartyCombat fight, IReadOnlyList<PartyFighter> fighters)
     {
         if (_summary != null)
@@ -299,7 +301,9 @@ internal sealed class CombatTabHook
             card.Damage.Text = shares
                 ? "Deals " + fighter.Dps + " per second, attacking every " + (fighter.IntervalMs / 1000.0).ToString("0.#") + "s and hitting "
                     + Math.Round(fighter.HitChance * 100) + "% of the time. You get " + Math.Round(fighter.Share * 100)
-                    + "% of it: about " + fighter.Hit.ToString(fighter.Hit < 10 ? "0.#" : "0") + " per hit."
+                    + "% of it: " + (fighter.Rolls
+                        ? Amount(fighter.LowHit) + " to " + Amount(fighter.HighHit) + " per hit, about " + Amount(fighter.Hit) + " on average."
+                        : "about " + Amount(fighter.Hit) + " per hit.")
                 : "On an older version of the mod: no health or damage shared.";
         }
     }

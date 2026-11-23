@@ -526,7 +526,10 @@ test('sync: presence, status, and a cursor that delivers each message once', asy
   await ok(member, 'POST', '/sync', { status: { skill: 'Combat', level: 0, action: fight } });
   view = await ok(owner, 'GET', `/guilds/${guild.id}`);
   assert.equal(view.members.find((x) => x.id === member.id).status.combat, undefined);
-  for (const combat of [{ hp: 1, maxHp: 0, dps: 1, level: 1 }, { hp: 1, maxHp: 10, dps: -1, level: 1 }, { hp: 1, maxHp: 10, dps: 1.5, level: 1 }, { hp: 1, maxHp: 10, dps: 1 }, { hp: 1, maxHp: 10, dps: 1, level: 1, interval: 5 }, { hp: 1, maxHp: 10, dps: 1, level: 1, hit: 0 }, 'strong']) {
+  await ok(member, 'POST', '/sync', { status: { skill: 'Combat', level: 0, action: fight, combat: { hp: 5, maxHp: 300, dps: 42, level: 17, min: 3, max: 97 } } });
+  const ranged = (await ok(owner, 'POST', '/sync', {})).guilds[0].members.find((m) => m.id === member.id).status.combat;
+  assert.deepEqual([ranged.min, ranged.max], [3, 97]);
+  for (const combat of [{ hp: 1, maxHp: 10, dps: 1, level: 1, min: 5, max: 4 }, { hp: 1, maxHp: 10, dps: 1, level: 1, max: 0 }, { hp: 1, maxHp: 0, dps: 1, level: 1 }, { hp: 1, maxHp: 10, dps: -1, level: 1 }, { hp: 1, maxHp: 10, dps: 1.5, level: 1 }, { hp: 1, maxHp: 10, dps: 1 }, { hp: 1, maxHp: 10, dps: 1, level: 1, interval: 5 }, { hp: 1, maxHp: 10, dps: 1, level: 1, hit: 0 }, 'strong']) {
     await fails(400, 'invalid_status', member, 'POST', '/sync', { status: { skill: 'Combat', level: 0, combat } });
   }
   await fails(401, 'unauthorized', { id: member.id, key: newKey() }, 'POST', '/sync', {});

@@ -5,7 +5,8 @@ using Melvor2.Chat.Guilds;
 namespace Melvor2.Chat.GameState;
 
 /// <summary>One guild mate in the same fight, and how much of their damage reaches my enemy.</summary>
-internal sealed record PartyFighter(string Id, string Name, int Level, int Hp, int MaxHp, int Dps, double Share, int IntervalMs, double HitChance)
+internal sealed record PartyFighter(string Id, string Name, int Level, int Hp, int MaxHp, int Dps, double Share, int IntervalMs, double HitChance,
+    int MinHit = 0, int MaxHit = 0)
 {
     /// <summary>Damage per second this player adds to my fight.</summary>
     public double Bonus => Dps * Share;
@@ -16,16 +17,30 @@ internal sealed record PartyFighter(string Id, string Name, int Level, int Hp, i
     /// can miss has to land harder for the average to stay the same.
     /// </summary>
     public double Hit => Bonus * IntervalMs / 1000.0 / HitChance;
+
+    /// <summary>True when they sent their smallest and largest hit, so each hit can be rolled like theirs.</summary>
+    public bool Rolls => MaxHit > 0 && MaxHit > MinHit;
+
+    /// <summary>The smallest and largest a landed hit can be. The middle of the range is <see cref="Hit"/>.</summary>
+    public double LowHit => Rolls ? Hit * MinHit / ((MinHit + MaxHit) / 2.0) : Hit;
+    public double HighHit => Rolls ? Hit * MaxHit / ((MinHit + MaxHit) / 2.0) : Hit;
+
+    /// <summary>
+    /// One landed hit. Rolled evenly between their smallest and largest hit, as the game rolls the player's
+    /// own, and scaled so that the average is still exactly <see cref="Hit"/>.
+    /// </summary>
+    public double Roll(Random random) => Rolls ? LowHit + (HighHit - LowHit) * random.NextDouble() : Hit;
 }
 
 /// <summary>
 /// Shared combat. Every player fights their own copy of the enemy; this adds a share of each party member's
-/// reported damage per second to mine: 15% of it when our combat levels are within ten of each other, 8%
-/// otherwise.
+/// reported damage per second to mine: 15% of it, or 8% when they are more than ten combat levels above me
+/// (a much stronger player carries less of a weaker one's fight; a weaker player helping always counts in full).
 ///
 /// It lands the way an attack does: each party member has their own attack bar that fills over their real
 /// attack interval, and when it is full they attack: it lands as often as their own attacks do (their
-/// chance to hit) and otherwise misses, like the player's own.
+/// chance to hit) and otherwise misses, like the player's own. A hit that lands is rolled between their
+/// smallest and largest hit, scaled so the average matches their share.
 ///
 /// The damage is applied with no attacker, so the game gives no XP for it and leaves it out of my own DPS
 /// figure. That last part matters: the figure I report to the others never includes what they gave me, so two
@@ -43,7 +58,7 @@ internal sealed class PartyCombat
     private const double LeaseSeconds = 45;
 
     /// <summary>A member whose last report is older than this adds nothing.</summary>
-    private const long StaleMs = 20_000;
+    private const long StaleMs = 30_000;
 
     private static readonly IReadOnlyList<PartyFighter> None = Array.Empty<PartyFighter>();
 
@@ -81,8 +96,9 @@ internal sealed class PartyCombat
     /// </summary>
     public Action<int, int>? HitLanded { get; set; }
 
+    /// <summary>The reduced share only applies to help from someone more than ten combat levels above me.</summary>
     public static double ShareFor(int myLevel, int theirLevel) =>
-        Math.Abs(myLevel - theirLevel) <= LevelWindow ? NearShare : FarShare;
+        theirLevel - myLevel > LevelWindow ? FarShare : NearShare;
 
     /// <summary>
     /// Main thread, twice a second. <paramref name="mine"/> is null when I am not in combat;
@@ -108,7 +124,9 @@ internal sealed class PartyCombat
             int interval = member.IntervalMs >= 250 ? (int)Math.Min(member.IntervalMs, 60000) : DefaultIntervalMs;
             // Members on a version that does not send a hit chance never miss, as before.
             double hitChance = member.HitPercent >= 1 ? Math.Min(member.HitPercent, 100) / 100.0 : 1.0;
-            var fighter = new PartyFighter(member.Id, member.Name, (int)member.CombatLevel, (int)member.Hp, (int)member.MaxHp, dps, share, interval, hitChance);
+            int maxHit = (int)Math.Clamp(member.MaxHit, 0, 1_000_000_000);
+            int minHit = (int)Math.Clamp(member.MinHit, 0, maxHit);
+            var fighter = new PartyFighter(member.Id, member.Name, (int)member.CombatLevel, (int)member.Hp, (int)member.MaxHp, dps, share, interval, hitChance, minHit, maxHit);
             fighters.Add(fighter);
             total += fighter.Bonus;
         }
@@ -156,7 +174,7 @@ internal sealed class PartyCombat
             bool missed = Random.Shared.NextDouble() >= fighter.HitChance;
             if (!missed)
             {
-                swing.Carry += fighter.Hit;
+                swing.Carry += fighter.Roll(Random.Shared);
                 int whole = (int)swing.Carry;
                 if (whole <= 0) continue; // Less than 1 damage so far: carried to their next hit.
                 swing.Carry -= whole;
