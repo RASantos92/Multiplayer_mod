@@ -112,7 +112,7 @@ Good to know:
 
 The **Guild Grounds** tab in the Guild window shows places your guild builds up together. Each place has five tasks. When all five are done, every member of the guild gets that place's bonus for as long as they are in the guild.
 
-- **Tasks you do by playing:** defeating monsters, completing Agility laps and succeeding at Thieving. They count by themselves, for every guild you are in, including what your character did while the game was closed. Some tasks only count certain monsters; the task says which.
+- **Tasks you do by playing:** each one names something specific, such as defeating monsters in one combat area, trapping a certain animal, running a named Agility course, pickpocketing a certain target, or making, catching or harvesting certain items. They count by themselves, for every guild you are in, including what your character did while the game was closed. You keep whatever you make.
 - **Tasks you donate to:** click **Donate**, pick an item from your bank and choose how many. Any item of the right kind is accepted, and better ones count for more: each step up counts 25% more, each step down 25% less. The panel shows what every item counts as.
 - **Donations are final.** The items leave your bank for good and cannot be taken back. You click the Donate button twice to confirm.
 - **Bonuses:** small passive bonuses such as +2% protection or 2% faster Fishing. They apply while the game is open and you are in the guild. The same bonus from two guilds does not add up.
@@ -228,7 +228,7 @@ Once you click **Enable Guilds**, the mod sends:
 - all your skill levels and the gear you have equipped
 - while you are fighting: your health, damage per second, combat level, attack speed and chance to hit
 - your marketplace listings and offers: the item, quantity and price
-- for Guild Grounds: how many of each monster you defeated, Agility courses you completed and Thieving targets you succeeded at since the last report, and the items you donate
+- for Guild Grounds: for the things its tasks ask for, how many you did since the last report (monsters defeated, animals trapped, Agility courses, Thieving targets, and items made, gathered, burned or buried), and the items you donate
 
 It never sends your save, your bank, or anything about your Steam or game account. Other members of your guilds can see your name, rank, online status, current action, skill levels, equipped gear and, while you fight, your health and damage.
 

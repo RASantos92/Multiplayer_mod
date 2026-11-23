@@ -207,10 +207,10 @@ Shared guild tasks at locations. The content (locations, tasks, accepted items, 
 
 | Method and path | Who | Body | Result |
 | --- | --- | --- | --- |
-| `GET /guilds/:id/grounds` | members | | `{rev, unit, tiers: [{id, name, locations: [{id, name, bonus: {id, value, text}, done, tasks: [{id, kind, text, need, have, mine, top: [{id, name, amount}], items?: [{item, worth}], enemies?}]}]}]}`. Amounts are in units of `1/unit` (thousandths). `kind` is `donate`, `kill`, `lap` or `steal`. |
+| `GET /guilds/:id/grounds` | members | | `{rev, unit, tiers: [{id, name, locations: [{id, name, bonus: {id, value, text}, done, tasks: [{id, kind, text, need, have, mine, top: [{id, name, amount}], items?: [{item, worth}], enemies?}]}]}]}`. Amounts are in units of `1/unit` (thousandths). `kind` is `donate` or a label for a counted task (`kill`, `make`, `hunt`, `course`, `thieve`, `burn`, `bury`, `do`); counted tasks also carry `stat` and usually `ids`. |
 | `POST /guilds/:id/grounds/donate` | members | `{task, item, qty, nonce}` | `{accepted, qty}`. The donor's game has already removed the items; it puts back `qty - accepted`. The same `nonce` always gets the same answer. Progress never passes a task's `need`. |
 
-Counts ride on `/sync`: the body may carry `grounds: {seq, kills: {enemyId: n}, laps: {courseId: n}, steals: {targetId: n}}`. A batch is applied once per `seq` (numbers must go up), to every guild the player is in, and the reply carries `groundsAck: seq`. Each guild in the `/sync` reply has `groundsRev` (changes when progress does) and `bonuses: [{id, value}]` for its finished locations. Nothing is verified: the server cannot see anyone's game.
+Counts ride on `/sync`: the body may carry `grounds: {seq, counts: {counterId: {objectId: n}}}`, how much the game's own per-object counters grew (for example `MelvorBase:CombatEnemyKilled` per monster, `MelvorBase:SmithingItemGained` per item). A task names its counter in `stat` and, usually, the objects that count in `ids`. A batch is applied once per `seq` (numbers must go up), to every guild the player is in, and the reply carries `groundsAck: seq`. Each guild in the `/sync` reply has `groundsRev` (changes when progress does) and `bonuses: [{id, value}]` for its finished locations. Nothing is verified: the server cannot see anyone's game.
 
 Leaving or being kicked keeps past contributions; deleting your data removes your name from them but not the guild's progress; disbanding deletes the grounds. Donated items are never returned.
 

@@ -153,8 +153,13 @@ while (Date.now() < deadline) {
         seq: Date.now(),
         counts: {
           'MelvorBase:CombatEnemyKilled': { 'MelvorBase:Golbin': 3, 'MelvorBase:GreenSlime': 2, 'MelvorBase:MagicCow': 2 },
-          'MelvorBase:AgilityCourseCompleted': { 'MelvorBase:Climb1': 1 },
-          'MelvorBase:ThievingSuccessfulAction': { 'MelvorBase:Citizen': 2 },
+          'MelvorBase:AgilityCourseCompleted': { 'MelvorBase:Climb1': 1, 'MelvorBase:Climb2': 1 },
+          'MelvorBase:ThievingSuccessfulAction': { 'MelvorBase:Citizen': 2, 'MelvorBase:Thug': 2 },
+          'MelvorBase:CookingItemGained': { 'MelvorBase:Shrimp': 5 },
+          'MelvorBase:SmithingItemGained': { 'MelvorBase:CopperBar': 4 },
+          'MelvorBase:FletchingItemGained': { 'MelvorBase:ArrowShaft': 10 },
+          'MelvorBase:CraftingItemGained': { 'MelvorBase:Leather': 3 },
+          'MelvorBase:HuntingAnimalTrapped': { 'MelvorBase:WildChicken': 1, 'MelvorBase:WildCow': 1 },
         },
       };
       const view = await call('GET', `/guilds/${guild.id}/grounds`);

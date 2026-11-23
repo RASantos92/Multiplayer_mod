@@ -75,7 +75,7 @@ internal sealed partial class GuildWindow
         _donateTask = null;
 
         _page.AddChild(Text("Your guild works on these together. Finish all five tasks at a location and every member gets its bonus. "
-            + "Kills, Agility laps and Thieving count as you play, also while the game is closed. Donated items are gone for good."));
+            + "Tasks without a Donate button count by themselves as you play, also while the game is closed, and you keep what you make. Donated items are gone for good."));
 
         // By default only the first tier that still has work is open; clicks are remembered while the game runs.
         int firstOpen = tiers.FindIndex(t => t.Locations.Any(l => !l.Done));

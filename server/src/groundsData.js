@@ -106,25 +106,27 @@ const kill = (id, need, area) => ({
   id, kind: 'kill', text: `Defeat monsters in ${AREAS[area].name}`, need: need * SCALE,
   stat: 'MelvorBase:CombatEnemyKilled', ids: AREAS[area].enemies, area: AREAS[area].name,
 });
-const lap = (id, text, need) => ({ id, kind: 'lap', text, need: need * SCALE, stat: 'MelvorBase:AgilityCourseCompleted' });
-const steal = (id, text, need) => ({ id, kind: 'steal', text, need: need * SCALE, stat: 'MelvorBase:ThievingSuccessfulAction' });
 
 
-/** A location with the usual five tasks: two donations, then kills, Agility laps and Thieving. */
-function place(id, name, bonus, [d1, d2, k, l, st]) {
-  return {
-    id,
-    name,
-    bonus,
-    tasks: [
-      donate(`${id}_${d1[3] ?? 'a'}`, d1[0], d1[1], d1[2]),
-      donate(`${id}_${d2[3] ?? 'b'}`, d2[0], d2[1], d2[2]),
-      kill(`${id}_kills`, k[0], k[1]),
-      lap(`${id}_laps`, `${l[0]} (Agility laps)`, l[1]),
-      steal(`${id}_steals`, `${st[0]} (successful Thieving actions)`, st[1]),
-    ],
-  };
+/**
+ * A location: two donations, one combat area, and two actions that fit the place.
+ * Task ids are `<location>_<suffix>`: the donation's own suffix, `kills`, then `act1` and `act2`.
+ */
+function place(id, name, bonus, [d1, d2, k, a1, a2]) {
+  return { id, name, bonus, tasks: [d1(id), d2(id), kill(`${id}_kills`, k[0], k[1]), a1(`${id}_act1`), a2(`${id}_act2`)] };
 }
+const give = (suffix, text, need, group) => (place) => donate(`${place}_${suffix}`, text, need, group);
+const mb = (ids) => ids.map((id) => `MelvorBase:${id}`);
+const count = (kind, stat) => (text, need, ids) => (id) => ({ id, kind, text, need: need * SCALE, stat, ...(ids?.length ? { ids: mb(ids) } : {}) });
+/** Items a skill produced: smithed, cooked, chopped, harvested... The player keeps them. */
+const make = (skill, text, need, ids) => count('make', `MelvorBase:${skill}ItemGained`)(text, need, ids);
+const hunt = count('hunt', 'MelvorBase:HuntingAnimalTrapped');
+const course = count('course', 'MelvorBase:AgilityCourseCompleted');
+const pick = count('thieve', 'MelvorBase:ThievingSuccessfulAction');
+const burn = count('burn', 'MelvorBase:FiremakingItemSpent');
+const bury = count('bury', 'MelvorBase:BankItemBuried');
+/** Anything a counter counts, whatever the object. */
+const any = (stat, text, need) => count('do', stat)(text, need);
 const xp = (skill, value) => ({ id: `xp:${skill}`, value, text: `+${value}% ${skill} XP` });
 const twice = (skill, value) => ({ id: `double:${skill}`, value, text: `${value}% chance of double ${skill} output` });
 const faster = (skill, value) => ({ id: `speed:${skill}`, value, text: `${skill} ${value}% faster` });
@@ -134,66 +136,41 @@ export const TIERS = [
     id: 't1',
     name: 'Perimeter',
     locations: [
-      {
-        id: 'gatehouse',
-        name: 'Gatehouse',
-        bonus: { id: 'protection', value: 2, text: '+2% protection rating' },
-        tasks: [
-          donate('gatehouse_logs', 'Donate logs for the gate', 500, 'logs'),
-          donate('gatehouse_stone', 'Donate stone or ore for repairs', 300, 'stone'),
-          kill('gatehouse_kills', 100, 'GolbinForest'),
-          lap('gatehouse_laps', 'Complete Agility laps of the gate run', 25),
-          steal('gatehouse_steals', 'Lift gate passes (successful Thieving actions)', 40),
-        ],
-      },
-      {
-        id: 'watchtower',
-        name: 'Watchtower',
-        bonus: { id: 'rangedAccuracy', value: 2, text: '+2% ranged accuracy rating' },
-        tasks: [
-          donate('watchtower_logs', 'Donate logs for scaffolding', 400, 'logs'),
-          donate('watchtower_feathers', 'Donate feathers from the roost', 200, 'feathers'),
-          kill('watchtower_kills', 50, 'GolbinForest'),
-          lap('watchtower_laps', 'Climb the tower (Agility laps)', 30),
-          steal('watchtower_steals', 'Pickpocket couriers (successful Thieving actions)', 30),
-        ],
-      },
-      {
-        id: 'ramparts',
-        name: 'Ramparts',
-        bonus: { id: 'damageTaken', value: 3, text: '3% less damage taken' },
-        tasks: [
-          donate('ramparts_stone', 'Donate stone or ore for the wall face', 400, 'stone'),
-          donate('ramparts_clay', 'Donate clay for mortar', 150, 'clay'),
-          kill('ramparts_kills', 75, 'SlimeForest'),
-          lap('ramparts_laps', 'Run the walls (Agility laps)', 30),
-          steal('ramparts_steals', 'Steal signal flares (successful Thieving actions)', 25),
-        ],
-      },
-      {
-        id: 'moat',
-        name: 'Moat & Drawbridge',
-        bonus: { id: 'fishingSpeed', value: 2, text: 'Fishing 2% faster' },
-        tasks: [
-          donate('moat_fish', 'Donate raw fish to stock the moat', 300, 'fish'),
-          donate('moat_crops', 'Donate crops and reeds from the bank', 250, 'crops'),
-          kill('moat_kills', 60, 'SlimeForest'),
-          lap('moat_laps', 'Cross the moat (Agility laps)', 20),
-          steal('moat_steals', 'Steal mooring ropes (successful Thieving actions)', 30),
-        ],
-      },
-      {
-        id: 'kennels',
-        name: 'Kennels',
-        bonus: { id: 'ranchingSpeed', value: 3, text: 'Ranching 3% faster' },
-        tasks: [
-          donate('kennels_bones', 'Donate bones for the yard', 200, 'bones'),
-          donate('kennels_straw', 'Donate wheat or sugarcane for bedding', 150, 'straw'),
-          kill('kennels_kills', 60, 'CorruptedFarmlands'),
-          lap('kennels_laps', 'Hound-handling drills (Agility laps)', 25),
-          steal('kennels_steals', 'Steal dog treats (successful Thieving actions)', 40),
-        ],
-      },
+      place('gatehouse', 'Gatehouse', { id: 'protection', value: 2, text: '+2% protection rating' }, [
+        give('logs', 'Donate logs for the gate', 500, 'logs'),
+        give('stone', 'Donate stone or ore for repairs', 300, 'stone'),
+        [100, 'GolbinForest'],
+        course('Complete the Climb 1 Agility course', 25, ['Climb1']),
+        pick('Pickpocket Citizens', 40, ['Citizen']),
+      ]),
+      place('watchtower', 'Watchtower', { id: 'rangedAccuracy', value: 2, text: '+2% ranged accuracy rating' }, [
+        give('logs', 'Donate logs for scaffolding', 400, 'logs'),
+        give('feathers', 'Donate feathers from the roost', 200, 'feathers'),
+        [50, 'GolbinForest'],
+        make('Fletching', 'Fletch Arrow Shafts, Headless Arrows or Stone Arrows', 300, ['ArrowShaft', 'HeadlessArrows', 'StoneArrows']),
+        hunt('Trap Wild Chickens or Greentail Birds', 30, ['WildChicken', 'GreentailBird']),
+      ]),
+      place('ramparts', 'Ramparts', { id: 'damageTaken', value: 3, text: '3% less damage taken' }, [
+        give('stone', 'Donate stone or ore for the wall face', 400, 'stone'),
+        give('clay', 'Donate clay for mortar', 150, 'clay'),
+        [75, 'SlimeForest'],
+        make('Smithing', 'Smelt Copper Bars', 100, ['CopperBar']),
+        course('Complete the Climb 2 Agility course', 30, ['Climb2']),
+      ]),
+      place('moat', 'Moat & Drawbridge', { id: 'fishingSpeed', value: 2, text: 'Fishing 2% faster' }, [
+        give('fish', 'Donate raw fish to stock the moat', 300, 'fish'),
+        give('crops', 'Donate crops and reeds from the bank', 250, 'crops'),
+        [60, 'SlimeForest'],
+        make('Cooking', 'Cook Shrimp or Sardines', 150, ['Shrimp', 'Sardine']),
+        pick('Pickpocket Thugs', 30, ['Thug']),
+      ]),
+      place('kennels', 'Kennels', { id: 'ranchingSpeed', value: 3, text: 'Ranching 3% faster' }, [
+        give('bones', 'Donate bones for the yard', 200, 'bones'),
+        give('straw', 'Donate wheat or sugarcane for bedding', 150, 'straw'),
+        [60, 'CorruptedFarmlands'],
+        hunt('Trap Wild Cows or Bushland Rabbits', 40, ['WildCow', 'BushlandRabbit']),
+        make('Crafting', 'Tan Leather', 80, ['Leather']),
+      ]),
     ],
   },
   {
@@ -201,35 +178,75 @@ export const TIERS = [
     name: 'Yard & Craft',
     locations: [
       place('trainingyard', 'Training Yard', { id: 'meleeAccuracy', value: 3, text: '+3% melee accuracy rating' }, [
-        ['Donate stone or ore for weights', 300, 'stone', 'stone'], ['Donate logs for training dummies', 400, 'logs2', 'logs'],
-        [200, 'GreenMangroves'], ['Run drills', 40], ['Steal sparring schedules', 30]]),
+        give('stone', 'Donate stone or ore for weights', 300, 'stone'),
+        give('logs', 'Donate logs for training dummies', 400, 'logs2'),
+        [200, 'GreenMangroves'],
+        course('Complete the Jump 1 or Climb 3 Agility course', 40, ['Jump1', 'Climb3']),
+        make('Smithing', 'Smelt Iron or Steel Bars', 150, ['IronBar', 'SteelBar']),
+      ]),
       place('archeryrange', 'Archery Range', { id: 'rangedDamage', value: 3, text: '+3% ranged max hit' }, [
-        ['Donate logs for arrow shafts', 500, 'logs2', 'logs'], ['Donate feathers for fletching', 300, 'feathers', 'feathers'],
-        [150, 'MistyThicket'], ['Sprint the target run', 35], ['Steal spent arrow bundles', 40]]),
+        give('logs', 'Donate logs for arrow shafts', 500, 'logs2'),
+        give('feathers', 'Donate feathers for fletching', 300, 'feathers'),
+        [150, 'MistyThicket'],
+        make('Fletching', 'Fletch Iron or Steel Arrows', 500, ['IronArrows', 'SteelArrows']),
+        make('Fletching', 'Fletch Oak or Willow Bows', 40, ['OakBow', 'WillowBow']),
+      ]),
       place('joustinglists', 'Jousting Lists', { id: 'meleeDamage', value: 3, text: '+3% melee max hit' }, [
-        ['Donate feed crops', 250, 'crops', 'crops'], ['Donate wheat or sugarcane for bedding', 200, 'straw', 'straw'],
-        [100, 'SiltedOasis'], ['Ride tilt runs', 30], ['Steal lance pennants', 25]]),
+        give('crops', 'Donate feed crops', 250, 'crops'),
+        give('straw', 'Donate wheat or sugarcane for bedding', 200, 'straw'),
+        [100, 'SiltedOasis'],
+        hunt('Trap Thornback Lizards or Wild Boars', 30, ['ThornbackLizard', 'WildBoar']),
+        course('Complete the Evade 1 or Jump 2 Agility course', 30, ['Evade1', 'Jump2']),
+      ]),
       place('forgeyard', 'Forge Yard', xp('Smithing', 4), [
-        ['Donate ore from the yard seam', 600, 'ore', 'ore'], ['Donate coal or charcoal', 300, 'coal', 'coal'],
-        [100, 'Murkwoods'], ['Haul slag', 30], ['Steal tool blanks', 30]]),
+        give('ore', 'Donate ore from the yard seam', 600, 'ore'),
+        give('coal', 'Donate coal or charcoal', 300, 'coal'),
+        [100, 'Murkwoods'],
+        burn('Burn Oak or Willow Logs for charcoal', 200, ['OakLog', 'WillowLog']),
+        pick('Pickpocket Craftsmen', 30, ['Craftsman']),
+      ]),
       place('smithy', 'Smithy', twice('Smithing', 4), [
-        ['Donate ore for the furnace', 500, 'ore', 'ore'], ['Donate coal or charcoal', 250, 'coal', 'coal'],
-        [80, 'ToxicBog'], ['Make quenching runs', 25], ['Steal guild tools', 35]]),
+        give('ore', 'Donate ore for the furnace', 500, 'ore'),
+        give('coal', 'Donate coal or charcoal', 250, 'coal'),
+        [80, 'ToxicBog'],
+        make('Smithing', 'Smelt Iron, Silver or Steel Bars', 200, ['IronBar', 'SilverBar', 'SteelBar']),
+        pick('Crack Locked Thug Chests', 35, ['LockedThugChest']),
+      ]),
       place('masonryyard', 'Masonry Yard', xp('Mining', 4), [
-        ['Donate stone or ore for blocks', 500, 'stone', 'stone'], ['Donate metal bars for chisels', 250, 'bars', 'bars'],
-        [70, 'SeaCliffside'], ['Haul stone', 30], ["Steal mason's measures", 30]]),
+        give('stone', 'Donate stone or ore for blocks', 500, 'stone'),
+        give('bars', 'Donate metal bars for chisels', 250, 'bars'),
+        [70, 'SeaCliffside'],
+        make('Mining', 'Mine Coal', 250, ['Coal']),
+        course('Complete the Climb 4 Agility course', 30, ['Climb4']),
+      ]),
       place('sawmill', 'Sawmill', xp('Woodcutting', 4), [
-        ['Donate logs for the saws', 700, 'logs2', 'logs'], ['Donate metal bars for saw teeth', 200, 'bars', 'bars'],
-        [80, 'MistyThicket'], ['Roll logs', 30], ['Steal marked timber', 35]]),
-      place('carpenter', "Carpenter's Workshop", faster('Crafting', 3), [
-        ['Donate logs for the benches', 600, 'logs2', 'logs'], ['Donate metal bars for nails and fittings', 250, 'bars', 'bars'],
-        [70, 'GreenMangroves'], ['Climb ladders', 25], ['Steal guild blueprints', 30]]),
+        give('logs', 'Donate logs for the saws', 700, 'logs2'),
+        give('bars', 'Donate metal bars for saw teeth', 200, 'bars'),
+        [80, 'MistyThicket'],
+        make('Woodcutting', 'Chop Willow or Teak Logs', 300, ['WillowLog', 'TeakLog']),
+        pick('Pickpocket Farmers', 35, ['Farmer']),
+      ]),
+      place('carpenter', 'Carpenter\'s Workshop', faster('Crafting', 3), [
+        give('logs', 'Donate logs for the benches', 600, 'logs2'),
+        give('bars', 'Donate metal bars for nails and fittings', 250, 'bars'),
+        [70, 'GreenMangroves'],
+        make('Fletching', 'Fletch Normal, Oak or Willow Bows', 60, ['NormalBow', 'OakBow', 'WillowBow']),
+        make('Crafting', 'Craft Leather or Hard Leather armour', 40, ['LeatherVambraces', 'LeatherBoots', 'LeatherCowl', 'LeatherShield', 'LeatherChaps', 'LeatherBody', 'HardLeatherVambraces', 'HardLeatherBoots', 'HardLeatherCowl', 'HardLeatherShield', 'HardLeatherChaps', 'HardLeatherBody']),
+      ]),
       place('tannery', 'Tannery', twice('Crafting', 4), [
-        ['Donate hides from the pens', 250, 'hides', 'hides'], ['Donate flax or leaves for tanning', 200, 'leaves', 'leaves'],
-        [90, 'CrescentLake'], ['Haul hides', 30], ['Steal cured pelts', 30]]),
+        give('hides', 'Donate hides from the pens', 250, 'hides'),
+        give('leaves', 'Donate flax or leaves for tanning', 200, 'leaves'),
+        [90, 'CrescentLake'],
+        hunt('Trap Wild Cows or Bushland Rabbits', 40, ['WildCow', 'BushlandRabbit']),
+        make('Crafting', 'Tan Leather', 150, ['Leather']),
+      ]),
       place('armory', 'Armory', { id: 'protection', value: 3, text: '+3% protection rating' }, [
-        ['Donate ore for fittings', 500, 'ore', 'ore'], ['Donate leather for straps', 200, 'leather', 'leather'],
-        [120, 'StingingNest'], ['Make gear-issue runs', 25], ['Steal issued loadouts', 40]]),
+        give('ore', 'Donate ore for fittings', 500, 'ore'),
+        give('leather', 'Donate leather for straps', 200, 'leather'),
+        [120, 'StingingNest'],
+        make('Crafting', 'Craft Studded Leather armour', 25, ['StuddedLeatherVambraces', 'StuddedLeatherBoots', 'StuddedLeatherCowl', 'StuddedLeatherShield', 'StuddedLeatherChaps', 'StuddedLeatherBody']),
+        pick('Pickpocket Capital Guards', 40, ['CapitalGuard']),
+      ]),
     ],
   },
   {
@@ -237,23 +254,47 @@ export const TIERS = [
     name: 'Sustenance',
     locations: [
       place('kitchen', 'Kitchen', xp('Cooking', 4), [
-        ['Donate raw fish', 400, 'fish3', 'fish'], ['Donate crops', 300, 'crops3', 'crops'],
-        [80, 'DesertPlains'], ['Carry trays', 30], ['Steal spice jars', 40]]),
+        give('fish', 'Donate raw fish', 400, 'fish3'),
+        give('crops', 'Donate crops', 300, 'crops3'),
+        [80, 'DesertPlains'],
+        make('Cooking', 'Cook Trout, Pike or Salmon', 300, ['Trout', 'Pike', 'Salmon']),
+        pick('Rob the Cooking Stall or pickpocket Chefs', 40, ['CookingStall', 'Chef']),
+      ]),
       place('larder', 'Larder', faster('Cooking', 4), [
-        ['Donate raw fish', 400, 'fish3', 'fish'], ['Donate herbs for salting', 250, 'herbs', 'herbs'],
-        [70, 'Mausoleum'], ['Stack crates', 25], ['Steal sealed preserves', 35]]),
+        give('fish', 'Donate raw fish', 400, 'fish3'),
+        give('herbs', 'Donate herbs for salting', 250, 'herbs'),
+        [70, 'Mausoleum'],
+        make('Fishing', 'Catch Pike, Salmon or Lobster', 250, ['RawPike', 'RawSalmon', 'RawLobster']),
+        hunt('Trap Wild Boars or Steppes Rabbits', 35, ['WildBoar', 'SteppesRabbit']),
+      ]),
       place('butchery', 'Butchery', twice('Ranching', 4), [
-        ['Donate wheat or sugarcane as livestock feed', 300, 'straw', 'straw'], ['Donate metal bars for carcass hooks', 250, 'bars', 'bars'],
-        [120, 'ToweringDivide'], ['Haul carcasses', 30], ['Steal prime cuts', 30]]),
+        give('straw', 'Donate wheat or sugarcane as livestock feed', 300, 'straw'),
+        give('bars', 'Donate metal bars for carcass hooks', 250, 'bars'),
+        [120, 'ToweringDivide'],
+        hunt('Trap Wild Elk or Wild Wolves', 30, ['WildElk', 'WildWolf']),
+        make('Cooking', 'Cook Beef or Chicken', 200, ['Beef', 'Chicken']),
+      ]),
       place('brewery', 'Brewery', xp('Herblore', 3), [
-        ['Donate wheat or sugarcane for the mash', 300, 'straw', 'straw'], ['Donate flax or leaves for the brew', 250, 'leaves', 'leaves'],
-        [70, 'BlackstoneBasin'], ['Roll barrels', 25], ['Steal cask taps', 35]]),
+        give('straw', 'Donate wheat or sugarcane for the mash', 300, 'straw'),
+        give('leaves', 'Donate flax or leaves for the brew', 250, 'leaves'),
+        [70, 'BlackstoneBasin'],
+        make('Farming', 'Harvest Wheat or Sugarcane', 200, ['Wheat', 'Sugarcane']),
+        any('MelvorBase:HerbloreItemGained', 'Brew potions with Herblore', 100),
+      ]),
       place('granary', 'Granary', twice('Farming', 4), [
-        ['Donate crops', 600, 'crops3', 'crops'], ['Donate wheat or sugarcane', 300, 'straw', 'straw'],
-        [80, 'SeaOfSand'], ['Haul sacks', 30], ['Steal grain rations', 40]]),
+        give('crops', 'Donate crops', 600, 'crops3'),
+        give('straw', 'Donate wheat or sugarcane', 300, 'straw'),
+        [80, 'SeaOfSand'],
+        make('Farming', 'Harvest Lettuce, Strawberries, Garlic or Corn', 300, ['Lettuce', 'Strawberry', 'Garlic', 'Corn']),
+        pick('Rob the Market Seed Stall', 40, ['MarketSeedStall']),
+      ]),
       place('apiary', 'Apiary', xp('Ranching', 3), [
-        ['Donate flowers', 250, 'flowers', 'flowers'], ['Donate honey or beeswax', 200, 'hive', 'hive'],
-        [60, 'DragonsPass'], ['Make netting runs', 25], ['Steal wax blocks', 30]]),
+        give('flowers', 'Donate flowers', 250, 'flowers'),
+        give('hive', 'Donate honey or beeswax', 200, 'hive'),
+        [60, 'DragonsPass'],
+        make('Ranching', 'Collect Honey or Beeswax from your bees', 200, ['Honey', 'Beeswax']),
+        hunt('Catch Green Butterflies', 25, ['GreenButterfly']),
+      ]),
     ],
   },
   {
@@ -261,26 +302,54 @@ export const TIERS = [
     name: 'Knowledge, Faith & Arcane',
     locations: [
       place('library', 'Library', { id: 'xp:NonCombat', value: 4, text: '+4% XP in all non-combat skills' }, [
-        ['Donate logs for shelving', 500, 'logs4', 'logs'], ['Donate flax or leaves for paper', 300, 'leaves', 'leaves'],
-        [60, 'KelsarinWastes'], ['Climb ladders', 30], ['Steal overdue tomes', 40]]),
+        give('logs', 'Donate logs for shelving', 500, 'logs4'),
+        give('leaves', 'Donate flax or leaves for paper', 300, 'leaves'),
+        [60, 'KelsarinWastes'],
+        pick('Pickpocket Archivists', 40, ['Archivist']),
+        course('Complete the Balance 1 Agility course', 30, ['Balance1']),
+      ]),
       place('scriptorium', 'Scriptorium', xp('Runecrafting', 4), [
-        ['Donate hides for parchment', 300, 'hides', 'hides'], ['Donate ash or charcoal for ink', 250, 'ash', 'ash'],
-        [60, 'WindyPlains'], ['Run from desk to vault', 25], ['Steal sealed scrolls', 35]]),
+        give('hides', 'Donate hides for parchment', 300, 'hides'),
+        give('ash', 'Donate ash or charcoal for ink', 250, 'ash'),
+        [60, 'WindyPlains'],
+        make('Runecrafting', 'Craft Chaos, Body or Death Runes', 500, ['ChaosRune', 'BodyRune', 'DeathRune']),
+        pick('Pickpocket Wizard Scholars or Wizards', 35, ['WizardScholar', 'Wizard']),
+      ]),
       place('maproom', 'Map Room', xp('Astrology', 3), [
-        ['Donate logs for survey stakes', 400, 'logs4', 'logs'], ['Donate uncut gems as survey markers', 250, 'gems', 'gems'],
-        [80, 'StormValley'], ['Run survey laps', 30], ['Steal field reports', 30]]),
+        give('logs', 'Donate logs for survey stakes', 400, 'logs4'),
+        give('gems', 'Donate uncut gems as survey markers', 250, 'gems'),
+        [80, 'StormValley'],
+        any('MelvorBase:AstrologyTimesConstellationStudied', 'Study constellations with Astrology', 300),
+        course('Complete the Night Climb or Jump 4 Agility course', 30, ['NightClimb', 'Jump4']),
+      ]),
       place('chapel', 'Chapel', xp('Prayer', 4), [
-        ['Donate bones', 300, 'bones4', 'bones'], ['Donate honey or beeswax for candles', 250, 'hive', 'hive'],
-        [100, 'DrearyBarrens'], ['Climb the bell tower', 25], ['Steal votive offerings', 30]]),
+        give('bones', 'Donate bones', 300, 'bones4'),
+        give('hive', 'Donate honey or beeswax for candles', 250, 'hive'),
+        [100, 'DrearyBarrens'],
+        bury('Bury Bones, Big Bones or Large Bones', 300, ['Bone', 'BigBone', 'LargeBone']),
+        burn('Burn Blessed Logs or Blessed Oak Logs', 50, ['BlessedLog', 'BlessedOakLog']),
+      ]),
       place('apothecary', 'Apothecary', twice('Herblore', 4), [
-        ['Donate herbs', 400, 'herbs', 'herbs'], ['Donate flax or leaves as reagents', 250, 'leaves', 'leaves'],
-        [70, 'Bloodlands'], ['Climb shelf ladders', 25], ['Steal remedy kits', 35]]),
+        give('herbs', 'Donate herbs', 400, 'herbs'),
+        give('leaves', 'Donate flax or leaves as reagents', 250, 'leaves'),
+        [70, 'Bloodlands'],
+        make('Farming', 'Harvest Nomel, Oxilyme or Sporlyle Herbs', 150, ['NomelHerb', 'OxilymeHerb', 'SporlyleHerb']),
+        any('MelvorBase:HerbloreItemGained', 'Brew potions with Herblore', 150),
+      ]),
       place('ritualcircle', 'Ritual Circle', twice('Runecrafting', 4), [
-        ['Donate essence', 400, 'essence', 'essence'], ['Donate clay for glyph chalk', 250, 'clay', 'clay'],
-        [90, 'GemstonePinnacles'], ['Run the circle', 30], ['Steal ritual components', 30]]),
+        give('essence', 'Donate essence', 400, 'essence'),
+        give('clay', 'Donate clay for glyph chalk', 250, 'clay'),
+        [90, 'GemstonePinnacles'],
+        make('Runecrafting', 'Craft Death, Decay or Astral Runes', 400, ['DeathRune', 'DecayRune', 'AstralRune']),
+        make('Mining', 'Mine Rune, Attuned or Pure Essence', 400, ['RuneEssence', 'AttunedEssence', 'PureEssence']),
+      ]),
       place('crypt', 'Crypt', { id: 'damageDealt', value: 2, text: '+2% damage dealt' }, [
-        ['Donate ore for grave markers', 400, 'ore4', 'ore'], ['Donate bones for burial', 300, 'bones4', 'bones'],
-        [200, 'ShipwreckIsles'], ['Descend the stairs', 30], ['Steal burial goods', 40]]),
+        give('ore', 'Donate ore for grave markers', 400, 'ore4'),
+        give('bones', 'Donate bones for burial', 300, 'bones4'),
+        [200, 'ShipwreckIsles'],
+        hunt('Catch Ghostly Butterflies or trap Phantoms', 40, ['GhostlyButterfly', 'Phantom']),
+        course('Complete the Fleshbound Passage or Sinew Chasm Agility course', 30, ['FleshboundPassage', 'SinewChasm']),
+      ]),
     ],
   },
   {
@@ -288,26 +357,54 @@ export const TIERS = [
     name: 'Commerce, Prestige & Deep Grounds',
     locations: [
       place('treasury', 'Treasury', { id: 'sellPrice', value: 5, text: 'Items sell for 5% more gold' }, [
-        ['Donate ore for strongboxes', 500, 'ore4', 'ore'], ['Donate silver or gold bars for the coffers', 300, 'precious', 'bars'],
-        [100, 'GemstonePinnacles'], ['Make audit runs', 30], ['Steal debts', 50]]),
+        give('ore', 'Donate ore for strongboxes', 500, 'ore4'),
+        give('bars', 'Donate silver or gold bars for the coffers', 300, 'precious'),
+        [100, 'GemstonePinnacles'],
+        make('Smithing', 'Smelt Gold Bars', 150, ['GoldBar']),
+        pick('Crack Locked Bank Chests or pickpocket Capital Citizens', 50, ['LockedBankChest', 'CapitalCitizen']),
+      ]),
       place('vault', 'Vault', { id: 'bankSlots', value: 5, text: '+5 bank slots' }, [
-        ['Donate ore for fittings', 500, 'ore4', 'ore'], ['Donate metal bars for locks', 300, 'bars5', 'bars'],
-        [120, 'DrownedAbyss'], ['Test the seals', 25], ['Steal sealed chests', 40]]),
+        give('ore', 'Donate ore for fittings', 500, 'ore4'),
+        give('bars', 'Donate metal bars for locks', 300, 'bars5'),
+        [120, 'DrownedAbyss'],
+        make('Smithing', 'Smelt Runite or Dawnsteel Bars', 100, ['RuniteBar', 'DawnsteelBar']),
+        pick('Rob the Ore Stall or Gem Stall', 40, ['OreStall', 'GemStall']),
+      ]),
       place('greathall', 'Great Hall', { id: 'xp:All', value: 2, text: '+2% XP in all skills' }, [
-        ['Donate logs for seating', 600, 'logs5', 'logs'], ['Donate crops for the feast', 400, 'crops5', 'crops'],
-        [100, 'KelsarinWastes'], ['Run the hall', 30], ['Steal place settings', 40]]),
+        give('logs', 'Donate logs for seating', 600, 'logs5'),
+        give('crops', 'Donate crops for the feast', 400, 'crops5'),
+        [100, 'KelsarinWastes'],
+        make('Cooking', 'Cook Sea Bream, Cod, Sea Bass or Lionfish', 300, ['SeaBream', 'Cod', 'SeaBass', 'Lionfish']),
+        make('Farming', 'Harvest Tomatoes, Carrots, Pumpkins or Cabbages', 200, ['Tomato', 'Carrot', 'Pumpkin', 'Cabbage']),
+      ]),
       place('trophyhall', 'Trophy Hall', { id: 'lootDoubling', value: 3, text: '3% chance of double combat loot' }, [
-        ['Donate logs for trophy mounts', 500, 'logs5', 'logs'], ['Donate uncut gems for polish', 300, 'gems', 'gems'],
-        [150, 'StormValley'], ['Make display runs', 25], ['Steal lost heirlooms', 30]]),
+        give('logs', 'Donate logs for trophy mounts', 500, 'logs5'),
+        give('gems', 'Donate uncut gems for polish', 300, 'gems'),
+        [150, 'StormValley'],
+        hunt('Trap Raptors, Giant Eagles or Griffins', 30, ['Raptor', 'GiantEagle', 'Griffin']),
+        make('Fletching', 'Fletch Emerald, Black Opal or Diamond Bolts', 150, ['EmeraldBolts', 'BlackOpalBolts', 'DiamondBolts']),
+      ]),
       place('infirmary', 'Infirmary', { id: 'foodHealing', value: 5, text: '+5% healing from food' }, [
-        ['Donate herbs', 400, 'herbs', 'herbs'], ['Donate wool or silk for bandages', 300, 'cloth', 'cloth'],
-        [90, 'Bloodlands'], ['Make stretcher runs', 30], ['Steal medical kits', 40]]),
+        give('herbs', 'Donate herbs', 400, 'herbs'),
+        give('cloth', 'Donate wool or silk for bandages', 300, 'cloth'),
+        [90, 'Bloodlands'],
+        any('MelvorBase:HerbloreItemGained', 'Brew potions with Herblore', 200),
+        make('Ranching', 'Collect Wool or Silk from your animals', 200, ['Wool', 'Silk']),
+      ]),
       place('dormitory', 'Dormitory', { id: 'maxHitpoints', value: 4, text: '+4% maximum hitpoints' }, [
-        ['Donate logs for bunks', 600, 'logs5', 'logs'], ['Donate wool or silk for linens', 400, 'cloth', 'cloth'],
-        [80, 'WindyPlains'], ['Climb bunk ladders', 35], ['Steal room keys', 40]]),
+        give('logs', 'Donate logs for bunks', 600, 'logs5'),
+        give('cloth', 'Donate wool or silk for linens', 400, 'cloth'),
+        [80, 'WindyPlains'],
+        course('Complete the Climb 6, Rappell 1 or Moonlight Dash Agility course', 35, ['Climb6', 'Rappell1', 'MoonlightDash']),
+        pick('Pickpocket Palace Citizens', 40, ['PalaceCitizen']),
+      ]),
       place('dungeon', 'Dungeon', xp('Slayer', 5), [
-        ['Donate stone or ore for cells', 500, 'stone', 'stone'], ['Donate metal bars for shackles', 300, 'bars5', 'bars'],
-        [250, 'DracolithCaverns'], ['Run the cell blocks', 30], ['Steal prisoner effects', 40]]),
+        give('stone', 'Donate stone or ore for cells', 500, 'stone'),
+        give('bars', 'Donate metal bars for shackles', 300, 'bars5'),
+        [250, 'DracolithCaverns'],
+        any('MelvorBase:SlayerMasterTasksCompleted', 'Complete Slayer tasks', 30),
+        pick('Pickpocket Palace Guards', 40, ['PalaceGuard']),
+      ]),
     ],
   },
 ];
