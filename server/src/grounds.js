@@ -37,12 +37,13 @@ const BONUS = new Map(LOCATIONS.map((loc) => [loc.id, loc.bonus]));
 
 /** The bonuses a guild has earned, for /sync: [{id, value}] with `value` in percent. */
 export function bonusesOf(guild) {
-  const out = [];
+  // Two locations with the same kind of bonus add up.
+  const sum = new Map();
   for (const id of guild.groundsDone ?? []) {
     const b = BONUS.get(id);
-    if (b) out.push({ id: b.id, value: b.value });
+    if (b) sum.set(b.id, (sum.get(b.id) ?? 0) + b.value);
   }
-  return out;
+  return [...sum].map(([id, value]) => ({ id, value }));
 }
 
 export function createGrounds({ store, now, guildCtx, requireRank, limits = {} }) {

@@ -78,36 +78,126 @@ internal sealed class GroundsBonus
         }
     }
 
-    /// <summary>The modifier entries for one bonus; empty for a bonus this version does not know.</summary>
-    private static List<string> Entries(string id, long percent)
+    /// <summary>The stats behind "speed:Skill" and "double:Skill": stats type, component, interval stats, doubling stat.</summary>
+    private static readonly Dictionary<string, (string Type, string Component, string[] Interval, string? Doubling)> s_skills = new()
+    {
+        ["Woodcutting"] = ("WoodcuttingAction", "Action", new[] { "PercentInterval" }, "DoublingChance"),
+        ["Mining"] = ("MiningAction", "Action", new[] { "PercentInterval" }, "DoublingChance"),
+        ["Fishing"] = ("FishingAction", "Action", new[] { "PercentMinInterval", "PercentMaxInterval" }, "DoublingChance"),
+        ["Smithing"] = ("ArtisanAction", "Action", new[] { "PercentInterval" }, "DoublingChance"),
+        ["Crafting"] = ("ArtisanAction", "Action", new[] { "PercentInterval" }, "DoublingChance"),
+        ["Fletching"] = ("ArtisanAction", "Action", new[] { "PercentInterval" }, "DoublingChance"),
+        ["Runecrafting"] = ("ArtisanAction", "Action", new[] { "PercentInterval" }, "DoublingChance"),
+        ["Beastcrafting"] = ("ArtisanAction", "Action", new[] { "PercentInterval" }, "DoublingChance"),
+        ["Cooking"] = ("CookingAction", "Action", new[] { "PercentInterval" }, "DoublingChance"),
+        ["Herblore"] = ("HerbloreAction", "Action", Array.Empty<string>(), "DoublingChance"),
+        ["Farming"] = ("FarmingAction", "Passive", new[] { "PercentInterval" }, "DoublingChance"),
+        ["Ranching"] = ("RanchingAction", "Passive", new[] { "PercentProductInterval" }, "DoublingChance"),
+        ["Agility"] = ("AgilityAction", "Action", new[] { "PercentInterval" }, null),
+        ["Thieving"] = ("ThievingAction", "Action", new[] { "PercentInterval" }, "DoublingChance"),
+        ["Hunting"] = ("HuntingAction", "Action", Array.Empty<string>(), "DoublingChance"),
+    };
+
+    /// <summary>Skills that "xp:Skill" may name, and that "xp:NonCombat" covers.</summary>
+    private static readonly string[] s_nonCombat =
+    {
+        "Woodcutting", "Mining", "Fishing", "Firemaking", "Smithing", "Cooking", "Crafting", "Runecrafting", "Fletching", "Farming",
+        "Ranching", "Hunting", "Beastcrafting", "Agility", "Herblore", "Thieving", "Astrology",
+    };
+
+    private static readonly string[] s_combatXp = { "Prayer", "Slayer" };
+
+    /// <summary>Every bonus id this version can apply, for the developer probe.</summary>
+    internal static IEnumerable<string> AllIds()
+    {
+        foreach (string id in new[] { "protection", "accuracy", "rangedAccuracy", "meleeAccuracy", "magicAccuracy", "damageTaken", "damageDealt",
+                     "rangedDamage", "meleeDamage", "magicDamage", "maxHitpoints", "fishingSpeed", "ranchingSpeed", "xp:NonCombat" }) yield return id;
+        foreach (string skill in s_nonCombat.Concat(s_combatXp)) yield return "xp:" + skill;
+        foreach ((string skill, var stats) in s_skills)
+        {
+            if (stats.Interval.Length > 0) yield return "speed:" + skill;
+            if (stats.Doubling != null) yield return "double:" + skill;
+        }
+    }
+
+    /// <summary>
+    /// The modifier entries for one bonus; empty for a bonus this version does not know.
+    /// Ids are either a fixed name ("protection") or a family and a skill ("xp:Mining", "speed:Crafting",
+    /// "double:Smithing"): more XP, shorter actions, or a chance to double what the skill produces.
+    /// </summary>
+    internal static List<string> Entries(string id, long percent)
     {
         double value = percent / 100.0;
         const string player = "\"Component\":{\"Entity\":\"MelvorBase:Combat\",\"Component\":\"Player\"}";
-        const string fishing = "\"Component\":{\"Entity\":\"MelvorBase:Fishing\",\"Component\":\"Action\"}";
-        const string ranching = "\"Component\":{\"Entity\":\"MelvorBase:Ranching\",\"Component\":\"Passive\"}";
+        static string Style(string style) => player + ",\"CombatStyle\":\"MelvorBase:" + style + "\"";
+        static string Of(string skill, string component) => "\"Component\":{\"Entity\":\"MelvorBase:" + skill + "\",\"Component\":\"" + component + "\"}";
         var list = new List<string>();
         if (percent <= 0) return list;
+
+        int colon = id.IndexOf(':');
+        if (colon > 0)
+        {
+            string family = id.Substring(0, colon);
+            string skill = id.Substring(colon + 1);
+            if (family == "xp")
+            {
+                IEnumerable<string> skills = skill == "NonCombat" ? s_nonCombat
+                    : s_nonCombat.Contains(skill) || s_combatXp.Contains(skill) ? new[] { skill } : Array.Empty<string>();
+                foreach (string one in skills) list.Add(Entry("MelvorBase:Experience", "PercentXPGained", Of(one, "Experience"), value));
+            }
+            else if (s_skills.TryGetValue(skill, out var stats))
+            {
+                if (family == "speed")
+                {
+                    foreach (string stat in stats.Interval) list.Add(Entry("MelvorBase:" + stats.Type, stat, Of(skill, stats.Component), -value));
+                }
+                else if (family == "double" && stats.Doubling != null)
+                {
+                    list.Add(Entry("MelvorBase:" + stats.Type, stats.Doubling, Of(skill, stats.Component), value));
+                }
+            }
+            return list;
+        }
+
         switch (id)
         {
             case "protection":
                 list.Add(Entry("MelvorBase:Character", "PercentProtectionRating", player, value));
                 break;
-            case "rangedAccuracy":
-                list.Add(Entry("MelvorBase:Character", "PercentAccuracyRating", player + ",\"CombatStyle\":\"MelvorBase:Ranged\"", value));
-                break;
             case "accuracy":
                 list.Add(Entry("MelvorBase:Character", "PercentAccuracyRating", player, value));
+                break;
+            case "rangedAccuracy":
+                list.Add(Entry("MelvorBase:Character", "PercentAccuracyRating", Style("Ranged"), value));
+                break;
+            case "meleeAccuracy":
+                list.Add(Entry("MelvorBase:Character", "PercentAccuracyRating", Style("Melee"), value));
+                break;
+            case "magicAccuracy":
+                list.Add(Entry("MelvorBase:Character", "PercentAccuracyRating", Style("Magic"), value));
                 break;
             case "damageTaken":
                 list.Add(Entry("MelvorBase:Character", "PercentDamageTaken", player, -value));
                 break;
+            case "damageDealt":
+                list.Add(Entry("MelvorBase:Character", "PercentDamageDealt", player, value));
+                break;
+            case "rangedDamage":
+                list.Add(Entry("MelvorBase:Character", "PercentMaxHit", Style("Ranged"), value));
+                break;
+            case "meleeDamage":
+                list.Add(Entry("MelvorBase:Character", "PercentMaxHit", Style("Melee"), value));
+                break;
+            case "magicDamage":
+                list.Add(Entry("MelvorBase:Character", "PercentMaxHit", Style("Magic"), value));
+                break;
+            case "maxHitpoints":
+                list.Add(Entry("MelvorBase:Character", "PercentMaxHitpoints", player, value));
+                break;
             case "fishingSpeed":
-                list.Add(Entry("MelvorBase:FishingAction", "PercentMinInterval", fishing, -value));
-                list.Add(Entry("MelvorBase:FishingAction", "PercentMaxInterval", fishing, -value));
-                break;
+                return Entries("speed:Fishing", percent);
             case "ranchingSpeed":
-                list.Add(Entry("MelvorBase:RanchingAction", "PercentProductInterval", ranching, -value));
-                break;
+                return Entries("speed:Ranching", percent);
         }
         return list;
     }

@@ -33,23 +33,14 @@ internal static class GroundsProbe
         "RanchingAnimal", "RanchingAnimalVariant", "RanchingCategory", "HuntingAnimal", "HuntingAnimalSpecies",
         "AgilityLocation", "AgilityCourse", "ThievingLocation", "ThievingRecipe",
         "CombatArea", "Dungeon", "CombatAreaCategory", "BankTagCategory", "CombatStyle",
+        "ArtisanRecipe", "CookingRecipe", "HerbloreRecipe", "FiremakingRecipe", "GrainMillRecipe", "Enemy",
     };
 
     /// <summary>Properties that only add noise to the listing.</summary>
     private static readonly HashSet<string> s_skip = new()
     {
         "Namespace", "LocalId", "Id", "Icon", "IconPath", "Description", "Media", "Texture", "Sprite", "Background",
-    };
-
-    private static readonly (string Name, string Json)[] s_bonuses =
-    {
-        ("protection +2%", Character("PercentProtectionRating", 0.02, "")),
-        ("accuracy +2% (ranged only)", Character("PercentAccuracyRating", 0.02, ",\"CombatStyle\":\"MelvorBase:Ranged\"")),
-        ("accuracy +2% (all styles)", Character("PercentAccuracyRating", 0.02, "")),
-        ("damage taken -3%", Character("PercentDamageTaken", -0.03, "")),
-        ("fishing min interval -2%", Component("MelvorBase:FishingAction", "PercentMinInterval", "MelvorBase:Fishing", "Action", -0.02)),
-        ("fishing max interval -2%", Component("MelvorBase:FishingAction", "PercentMaxInterval", "MelvorBase:Fishing", "Action", -0.02)),
-        ("ranching product interval -3%", Component("MelvorBase:RanchingAction", "PercentProductInterval", "MelvorBase:Ranching", "Passive", -0.03)),
+        "Attacks", "Passives", "Drops", "Stats", "Levels", "AttackStances", "DisplayRequirements", "UnlockRequirements",
     };
 
     private static readonly string s_dir = Path.Combine(OS.GetUserDataDir(), "mod-probe");
@@ -85,6 +76,7 @@ internal static class GroundsProbe
                     s_log.AppendLine("## Counters (first reading)");
                     Counters(game);
                     Modifiers(game);
+                    Items(game);
                     Tables(game);
                     s_stage = 1;
                     s_frames = 0;
@@ -164,19 +156,21 @@ internal static class GroundsProbe
             s_log.AppendLine("  no modifier system found");
             return;
         }
-        foreach ((string name, string json) in s_bonuses)
+        // One at a time, so a refusal names the bonus; these are exactly the entries the mod would apply.
+        foreach (string id in GroundsBonus.AllIds())
         {
+            string json = "{\"Global\":[],\"Component\":[" + string.Join(",", GroundsBonus.Entries(id, 3)) + "]}";
             try
             {
                 using JsonDocument doc = JsonDocument.Parse(json);
                 var values = new ModifierValues(game.Data, doc.RootElement);
                 modifiers.Add(s_source, values);
                 bool removed = modifiers.Remove(s_source);
-                s_log.AppendLine("  ok       " + name + "   removed=" + removed);
+                s_log.AppendLine("  ok       " + id + "   removed=" + removed);
             }
             catch (Exception e)
             {
-                s_log.AppendLine("  FAILED   " + name + "   " + e.GetType().Name + ": " + e.Message);
+                s_log.AppendLine("  FAILED   " + id + "   " + (e.InnerException ?? e).GetType().Name + ": " + (e.InnerException ?? e).Message);
                 s_log.AppendLine("           " + json);
                 try
                 {
@@ -187,6 +181,17 @@ internal static class GroundsProbe
                     // Best effort: never leave the probe's modifier behind.
                 }
             }
+        }
+    }
+
+    /// <summary>Every item: id, name and gold value, one per line.</summary>
+    private static void Items(Game game)
+    {
+        s_log.AppendLine();
+        s_log.AppendLine("## Items");
+        foreach (GamesByMalcs.Melvor2.Data.Items.Item item in game.Data.Database.GetRegistry<GamesByMalcs.Melvor2.Data.Items.Item>().GetAllObjects().OrderBy(i => i.Id))
+        {
+            s_log.AppendLine("  " + item.Id + " | " + Safe(() => BankAccess.Name(item)) + " | " + Safe(() => BankAccess.ValueOf(item).ToString()));
         }
     }
 

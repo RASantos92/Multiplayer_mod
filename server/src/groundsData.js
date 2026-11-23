@@ -14,6 +14,9 @@
 
 export const STEP = 1.25;
 
+// Every quantity written in the tables below is multiplied by this.
+export const SCALE = 3;
+
 // Items are listed in the order the game unlocks them (level needed to gather them).
 export const GROUPS = {
   logs: {
@@ -43,10 +46,10 @@ const WATER = ['MelvorBase:Spitterfish', 'MelvorBase:Sailfish', 'MelvorBase:Nigh
 // Animals: the Corrupted Farmlands' livestock, wolves, stags, boars, hounds and the Storm Valley's cats.
 const BEASTS = ['MelvorBase:GiantChicken', 'MelvorBase:MagicCow', 'MelvorBase:EnragedBoar', 'MelvorBase:Wolf', 'MelvorBase:DireWolf', 'MelvorBase:SavageDireWolf', 'MelvorBase:SpiritStag', 'MelvorBase:BloodHound', 'MelvorBase:StormLynx', 'MelvorBase:StormFang', 'MelvorBase:StormBeast'];
 
-const donate = (id, text, need, group) => ({ id, kind: 'donate', text, need, group });
-const kill = (id, text, need, enemies) => ({ id, kind: 'kill', text, need, ...(enemies ? { enemies } : {}) });
-const lap = (id, text, need) => ({ id, kind: 'lap', text, need });
-const steal = (id, text, need) => ({ id, kind: 'steal', text, need });
+const donate = (id, text, need, group) => ({ id, kind: 'donate', text, need: need * SCALE, group });
+const kill = (id, text, need, enemies) => ({ id, kind: 'kill', text, need: need * SCALE, ...(enemies ? { enemies } : {}) });
+const lap = (id, text, need) => ({ id, kind: 'lap', text, need: need * SCALE });
+const steal = (id, text, need) => ({ id, kind: 'steal', text, need: need * SCALE });
 
 export const TIERS = [
   {

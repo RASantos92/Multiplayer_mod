@@ -123,6 +123,11 @@ internal sealed partial class GuildWindow
         _tabs.AddChild(_manageButton);
         _tabs.AddChild(_marketButton);
         _tabs.AddChild(_groundsButton);
+        // Spread the tabs evenly across the panel.
+        foreach (Button tab in new[] { _membersButton, _manageButton, _marketButton, _groundsButton })
+        {
+            tab.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        }
         right.AddChild(_tabs);
 
         _page = new VBoxContainer();

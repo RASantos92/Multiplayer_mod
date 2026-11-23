@@ -72,6 +72,8 @@ const give = (p, g, task, item, qty, n = nonce()) => ok(p, 'POST', `${g}/donate`
 const syncOf = (p, grounds) => ok(p, 'POST', '/sync', grounds ? { grounds } : {});
 const guildIn = (sync, guild) => sync.guilds.find((x) => x.id === guild.id);
 
+const NEED = new Map(TIERS.flatMap((t) => t.locations.flatMap((l) => l.tasks.map((x) => [x.id, x.need]))));
+const need = (id) => NEED.get(id);
 const LOGS = GROUPS.logs.items;
 const BASE = LOGS.indexOf(GROUPS.logs.base);
 
@@ -100,7 +102,7 @@ test('view: members see every location with empty progress; outsiders do not', a
   assert.equal(view.unit, 1000);
   assert.equal(locations(view).length, 5);
   const logs = taskOf(view, 'gatehouse_logs');
-  assert.deepEqual([logs.kind, logs.need, logs.have, logs.mine, logs.top.length], ['donate', 500_000, 0, 0, 0]);
+  assert.deepEqual([logs.kind, logs.need, logs.have, logs.mine, logs.top.length], ['donate', need('gatehouse_logs') * 1000, 0, 0, 0]);
   assert.deepEqual(logs.items.find((i) => i.item === GROUPS.logs.base), { item: GROUPS.logs.base, worth: 1000 });
   assert.equal(taskOf(view, 'gatehouse_kills').items, undefined);
   assert.ok(locations(view).every((l) => !l.done && l.bonus.id && l.bonus.text));
@@ -137,12 +139,13 @@ test('donate: worth by step, contributors, a repeated nonce counts once, and bad
 
 test('donate: a donation larger than what is left is trimmed, and a full task accepts nothing', async () => {
   const { owner, g } = await guildOf();
-  assert.equal((await give(owner, g, 'watchtower_feathers', 'MelvorBase:Feathers', 190)).accepted, 190);
+  const feathers = need('watchtower_feathers');
+  assert.equal((await give(owner, g, 'watchtower_feathers', 'MelvorBase:Feathers', feathers - 10)).accepted, feathers - 10);
   assert.deepEqual(await give(owner, g, 'watchtower_feathers', 'MelvorBase:Feathers', 50), { accepted: 10, qty: 50 });
   assert.deepEqual(await give(owner, g, 'watchtower_feathers', 'MelvorBase:Feathers', 5), { accepted: 0, qty: 5 });
-  // 7.5 base logs short: six step-up logs (1.25 each) cover it, the seventh is not needed.
-  await give(owner, g, 'watchtower_logs', LOGS[BASE], 392);
-  await give(owner, g, 'watchtower_logs', LOGS[BASE - 1], 1); // 0.8 -> 392.8 of 400
+  // 7.2 base logs short: six step-up logs (1.25 each) cover it, the seventh is not needed.
+  await give(owner, g, 'watchtower_logs', LOGS[BASE], need('watchtower_logs') - 8);
+  await give(owner, g, 'watchtower_logs', LOGS[BASE - 1], 1); // 0.8 more: 7.2 short
   assert.deepEqual(await give(owner, g, 'watchtower_logs', LOGS[BASE + 1], 9), { accepted: 6, qty: 9 });
   const logs = taskOf(await ok(owner, 'GET', g), 'watchtower_logs');
   assert.equal(logs.have, logs.need);
@@ -150,7 +153,7 @@ test('donate: a donation larger than what is left is trimmed, and a full task ac
 
 test('donate: two members racing for the last units never push a task past its need', async () => {
   const { owner, member, g } = await guildOf();
-  await give(owner, g, 'ramparts_clay', 'MelvorBase:Clay', 140);
+  await give(owner, g, 'ramparts_clay', 'MelvorBase:Clay', need('ramparts_clay') - 10);
   const results = await Promise.all([
     give(owner, g, 'ramparts_clay', 'MelvorBase:Clay', 8),
     give(member, g, 'ramparts_clay', 'MelvorBase:Clay', 8),
@@ -158,8 +161,8 @@ test('donate: two members racing for the last units never push a task past its n
   ]);
   assert.equal(results.reduce((sum, r) => sum + r.accepted, 0), 10);
   const clay = taskOf(await ok(owner, 'GET', g), 'ramparts_clay');
-  assert.equal(clay.have, 150_000);
-  assert.equal(clay.top.reduce((sum, t) => sum + t.amount, 0), 150_000);
+  assert.equal(clay.have, clay.need);
+  assert.equal(clay.top.reduce((sum, t) => sum + t.amount, 0), clay.need);
 });
 
 test('counts: batches from /sync are applied once each, to every matching task', async () => {
@@ -200,9 +203,9 @@ test('counts go to every guild the player is in', async () => {
 
 test('completing every task at a location gives the guild its bonus through /sync', async () => {
   const { owner, member, guild, g } = await guildOf();
-  await give(owner, g, 'moat_fish', GROUPS.fish.base, 300);
-  await give(owner, g, 'moat_crops', GROUPS.crops.base, 250);
-  await syncOf(owner, { seq: 1, kills: { 'MelvorBase:Chicken': 500, 'MelvorBase:Sailfish': 60 }, laps: { 'MelvorBase:SomeCourse': 19 }, steals: { 'MelvorBase:Man': 30 } });
+  await give(owner, g, 'moat_fish', GROUPS.fish.base, need('moat_fish'));
+  await give(owner, g, 'moat_crops', GROUPS.crops.base, need('moat_crops'));
+  await syncOf(owner, { seq: 1, kills: { 'MelvorBase:Chicken': 500, 'MelvorBase:Sailfish': need('moat_kills') }, laps: { 'MelvorBase:SomeCourse': need('moat_laps') - 1 }, steals: { 'MelvorBase:Man': need('moat_steals') } });
   assert.deepEqual(guildIn(await syncOf(member), guild).bonuses, []);
   assert.equal(locations(await ok(owner, 'GET', g)).find((l) => l.id === 'moat').done, false);
 

@@ -19,6 +19,9 @@ internal sealed partial class GuildWindow
     private Button _groundsButton = null!;
     private double _sinceGrounds;
 
+    /// <summary>Sections the player opened or folded by hand: "tier:0" or "loc:gatehouse".</summary>
+    private readonly Dictionary<string, bool> _groundsOpen = new();
+
     private string? _donateTask;
     private string? _donateItem;
     private int _donateQty = 1;
@@ -74,22 +77,34 @@ internal sealed partial class GuildWindow
         _page.AddChild(Text("Your guild works on these together. Finish all five tasks at a location and every member gets its bonus. "
             + "Kills, Agility laps and Thieving count as you play, also while the game is closed. Donated items are gone for good."));
 
+        // By default only the first tier that still has work is open; clicks are remembered while the game runs.
+        int firstOpen = tiers.FindIndex(t => t.Locations.Any(l => !l.Done));
         for (int number = 0; number < tiers.Count; number++)
         {
             GroundsTier tier = tiers[number];
-            _page.AddChild(Heading("Tier " + (number + 1) + ": " + tier.Name));
+            string tierKey = "tier:" + number;
+            bool tierOpen = _groundsOpen.TryGetValue(tierKey, out bool chosen) ? chosen : number == Math.Max(0, firstOpen);
+            int finished = tier.Locations.Count(l => l.Done);
+            Button tierHead = Fold(tierOpen, "Tier " + (number + 1) + ": " + tier.Name + "   (" + finished + " of " + tier.Locations.Count + " built)", 18, tierKey);
+            tierHead.AddThemeColorOverride("font_color", new Color(0.95f, 0.8f, 0.4f));
+            _page.AddChild(tierHead);
+            if (!tierOpen) continue;
+
             foreach (GroundsLocation location in tier.Locations)
             {
                 _page.AddChild(new HSeparator());
+                string key = "loc:" + location.Id;
+                // Finished locations fold away by themselves.
+                bool open = _groundsOpen.TryGetValue(key, out bool picked) ? picked : !location.Done;
                 bool known = GroundsBonus.Knows(location.BonusId);
-                Label name = Short(location.Name);
-                name.AddThemeFontSizeOverride("font_size", 18);
+                Button name = Fold(open, location.Name + "   (" + location.Tasks.Count(t => t.Done) + "/" + location.Tasks.Count + ")", 17, key);
                 Label bonus = Short(location.Done
                     ? (known ? "Bonus active: " : "Bonus earned (update the mod to receive it): ") + location.BonusText
                     : "Reward: " + location.BonusText);
                 bonus.Modulate = location.Done && known ? s_green : s_dim;
                 bonus.HorizontalAlignment = HorizontalAlignment.Right;
                 _page.AddChild(Row(name, Grow(bonus)));
+                if (!open) continue;
 
                 var table = new GridContainer { Columns = 4, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
                 table.AddThemeConstantOverride("h_separation", 12);
@@ -97,7 +112,29 @@ internal sealed partial class GuildWindow
                 foreach (GroundsTask task in location.Tasks) AddTaskRow(table, grounds, task);
                 _page.AddChild(table);
             }
+            _page.AddChild(new HSeparator());
         }
+    }
+
+    /// <summary>A heading that opens or closes the section under it.</summary>
+    private Button Fold(bool open, string text, int fontSize, string key)
+    {
+        var button = new Button
+        {
+            Text = (open ? "-  " : "+  ") + text,
+            Flat = true,
+            Alignment = HorizontalAlignment.Left,
+            FocusMode = Control.FocusModeEnum.None,
+            MouseDefaultCursorShape = Control.CursorShape.PointingHand,
+            TooltipText = open ? "Click to fold away" : "Click to open",
+        };
+        button.AddThemeFontSizeOverride("font_size", fontSize);
+        button.Pressed += () =>
+        {
+            _groundsOpen[key] = !open;
+            RebuildMarket();
+        };
+        return button;
     }
 
     private void AddTaskRow(GridContainer table, GroundsService grounds, GroundsTask task)
@@ -140,7 +177,11 @@ internal sealed partial class GuildWindow
                 _donateItem = null;
                 RebuildMarket();
             });
-            donate.CustomMinimumSize = new Vector2(96, 30);
+            // The game's button style is sized for big actions; this one sits in a table row.
+            donate.AddThemeFontSizeOverride("font_size", 14);
+            donate.CustomMinimumSize = new Vector2(84, 24);
+            donate.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+            donate.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
             donate.Disabled = grounds.Busy;
             table.AddChild(donate);
         }
