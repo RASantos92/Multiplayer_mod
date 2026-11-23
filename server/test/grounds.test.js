@@ -100,8 +100,8 @@ test('view: members see every location with empty progress; outsiders do not', a
   const { owner, outsider, g } = await guildOf();
   const view = await ok(owner, 'GET', g);
   assert.equal(view.unit, 1000);
-  assert.equal(locations(view).length, 28);
-  assert.deepEqual(view.tiers.map((x) => x.locations.length), [5, 10, 6, 7]);
+  assert.equal(locations(view).length, 35);
+  assert.deepEqual(view.tiers.map((x) => x.locations.length), [5, 10, 6, 7, 7]);
   const logs = taskOf(view, 'gatehouse_logs');
   assert.deepEqual([logs.kind, logs.need, logs.have, logs.mine, logs.top.length], ['donate', need('gatehouse_logs') * 1000, 0, 0, 0]);
   assert.deepEqual(logs.items.find((i) => i.item === GROUPS.logs.base), { item: GROUPS.logs.base, worth: 1000 });

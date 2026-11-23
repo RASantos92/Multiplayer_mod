@@ -29,6 +29,11 @@ internal static class GroundsProbe
     /// <summary>Data classes worth listing, by type name.</summary>
     private static readonly HashSet<string> s_wanted = new()
     {
+        // Left empty on purpose: the tables were dumped once and are not needed again. Add type names to dump them.
+    };
+
+    private static readonly HashSet<string> s_wantedBefore = new()
+    {
         "WoodcuttingRecipe", "MiningRecipe", "FishingRecipe", "FishingLocation", "FarmingRecipe", "FarmingCategory",
         "RanchingAnimal", "RanchingAnimalVariant", "RanchingCategory", "HuntingAnimal", "HuntingAnimalSpecies",
         "AgilityLocation", "AgilityCourse", "ThievingLocation", "ThievingRecipe",
@@ -76,7 +81,6 @@ internal static class GroundsProbe
                     s_log.AppendLine("## Counters (first reading)");
                     Counters(game);
                     Modifiers(game);
-                    Items(game);
                     Tables(game);
                     s_stage = 1;
                     s_frames = 0;
@@ -159,7 +163,7 @@ internal static class GroundsProbe
         // One at a time, so a refusal names the bonus; these are exactly the entries the mod would apply.
         foreach (string id in GroundsBonus.AllIds())
         {
-            string json = "{\"Global\":[],\"Component\":[" + string.Join(",", GroundsBonus.Entries(id, 3)) + "]}";
+            string json = GroundsBonus.Json(new[] { new KeyValuePair<string, long>(id, 3) });
             try
             {
                 using JsonDocument doc = JsonDocument.Parse(json);

@@ -32,7 +32,33 @@ internal sealed class GroundsBonus
     private string _refused = "";
 
     /// <summary>True if this mod version knows how to apply the bonus.</summary>
-    public static bool Knows(string id) => Entries(id, 1).Count > 0;
+    public static bool Knows(string id) => Entries(id, 1).Count > 0 || Globals(id, 1).Count > 0;
+
+    /// <summary>The modifier data for a set of bonuses (id, amount), or "" when none of them is known.</summary>
+    internal static string Json(IEnumerable<KeyValuePair<string, long>> bonuses)
+    {
+        var entries = new List<string>();
+        var globals = new List<string>();
+        foreach ((string id, long amount) in bonuses.OrderBy(b => b.Key, StringComparer.Ordinal))
+        {
+            long capped = Math.Clamp(amount, 0, MaxPercent);
+            entries.AddRange(Entries(id, capped));
+            globals.AddRange(Globals(id, capped));
+        }
+        return entries.Count + globals.Count == 0 ? ""
+            : "{\"Global\":[" + string.Join(",", globals) + "],\"Component\":[" + string.Join(",", entries) + "]}";
+    }
+
+    /// <summary>Bonuses that apply to a whole group of stats instead of one component.</summary>
+    private static List<string> Globals(string id, long percent)
+    {
+        var list = new List<string>();
+        if (percent > 0 && id == "xp:All")
+        {
+            list.Add("{\"StatGroup\":\"GlobalPercentXpGained\",\"Value\":" + (percent / 100.0).ToString(CultureInfo.InvariantCulture) + "}");
+        }
+        return list;
+    }
 
     /// <summary>Main thread, game accessible. <paramref name="bonuses"/> is bonus id to percent; empty removes it.</summary>
     public void Update(Game game, IReadOnlyDictionary<string, long> bonuses)
@@ -46,12 +72,7 @@ internal sealed class GroundsBonus
             _refused = "";
         }
 
-        var entries = new List<string>();
-        foreach ((string id, long percent) in bonuses.OrderBy(b => b.Key, StringComparer.Ordinal))
-        {
-            entries.AddRange(Entries(id, Math.Clamp(percent, 0, MaxPercent)));
-        }
-        string wanted = string.Join(",", entries);
+        string wanted = Json(bonuses);
         if (wanted == _applied || (wanted.Length > 0 && wanted == _refused)) return;
 
         try
@@ -65,7 +86,7 @@ internal sealed class GroundsBonus
                 ModEntry.Log("Guild Grounds bonuses off.");
                 return;
             }
-            using JsonDocument doc = JsonDocument.Parse("{\"Global\":[],\"Component\":[" + wanted + "]}");
+            using JsonDocument doc = JsonDocument.Parse(wanted);
             _modifiers.Add(_source, new ModifierValues(game.Data, doc.RootElement));
             _applied = wanted;
             ModEntry.Log("Guild Grounds bonuses on: " + string.Join(", ", bonuses.Select(b => b.Key + " " + b.Value + "%")));
@@ -110,7 +131,8 @@ internal sealed class GroundsBonus
     internal static IEnumerable<string> AllIds()
     {
         foreach (string id in new[] { "protection", "accuracy", "rangedAccuracy", "meleeAccuracy", "magicAccuracy", "damageTaken", "damageDealt",
-                     "rangedDamage", "meleeDamage", "magicDamage", "maxHitpoints", "fishingSpeed", "ranchingSpeed", "xp:NonCombat" }) yield return id;
+                     "rangedDamage", "meleeDamage", "magicDamage", "maxHitpoints", "fishingSpeed", "ranchingSpeed", "xp:NonCombat", "xp:All",
+                     "sellPrice", "bankSlots", "foodHealing", "lootDoubling", "goldDoubling" }) yield return id;
         foreach (string skill in s_nonCombat.Concat(s_combatXp)) yield return "xp:" + skill;
         foreach ((string skill, var stats) in s_skills)
         {
@@ -192,6 +214,22 @@ internal sealed class GroundsBonus
                 break;
             case "maxHitpoints":
                 list.Add(Entry("MelvorBase:Character", "PercentMaxHitpoints", player, value));
+                break;
+            case "sellPrice":
+                list.Add(Entry("MelvorBase:ItemSale", "PercentPricePerItem", "\"Component\":{\"Entity\":\"MelvorBase:Bank\",\"Component\":\"ItemSales\"}", value));
+                break;
+            case "bankSlots":
+                // Not a percentage: this many more bank slots.
+                list.Add(Entry("MelvorBase:BankInventory", "FlatMaxStacks", "\"Component\":{\"Entity\":\"MelvorBase:Bank\",\"Component\":\"Inventory\"}", percent));
+                break;
+            case "foodHealing":
+                list.Add(Entry("MelvorBase:CombatFood", "PercentHealing", "\"Component\":{\"Entity\":\"MelvorBase:Combat\",\"Component\":\"Food\"}", value));
+                break;
+            case "lootDoubling":
+                list.Add(Entry("MelvorBase:CombatLoot", "ItemDoublingChance", "\"Component\":{\"Entity\":\"MelvorBase:Combat\",\"Component\":\"Loot\"}", value));
+                break;
+            case "goldDoubling":
+                list.Add(Entry("MelvorBase:CombatLoot", "CurrencyDoublingChance", "\"Component\":{\"Entity\":\"MelvorBase:Combat\",\"Component\":\"Loot\"}", value));
                 break;
             case "fishingSpeed":
                 return Entries("speed:Fishing", percent);

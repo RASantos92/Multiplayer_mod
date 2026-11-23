@@ -57,6 +57,11 @@ export const GROUPS = {
   ash: { base: 'MelvorBase:Ash', items: ['MelvorBase:Ash', 'MelvorBase:Charcoal'] },
   essence: { base: 'MelvorBase:RuneEssence', items: ['MelvorBase:RuneEssence', 'MelvorBase:AttunedEssence', 'MelvorBase:PureEssence'] },
   gems: { base: 'MelvorBase:UncutTopaz', items: ['MelvorBase:UncutTopaz', 'MelvorBase:UncutSapphire', 'MelvorBase:UncutRuby', 'MelvorBase:UncutEmerald', 'MelvorBase:UncutDiamond', 'MelvorBase:UncutJadestone'] },
+  logs5: { base: 'MelvorBase:MahoganyLog', items: ['MelvorBase:NormalLog', 'MelvorBase:OakLog', 'MelvorBase:WillowLog', 'MelvorBase:TeakLog', 'MelvorBase:MapleLog', 'MelvorBase:MahoganyLog', 'MelvorBase:YewLog', 'MelvorBase:MagicLog', 'MelvorBase:AshenLog', 'MelvorBase:HardOakLog', 'MelvorBase:RedwoodLog'] },
+  crops5: { base: 'MelvorBase:Corn', items: ['MelvorBase:Potato', 'MelvorBase:Onion', 'MelvorBase:Lettuce', 'MelvorBase:Strawberry', 'MelvorBase:Garlic', 'MelvorBase:Corn', 'MelvorBase:Nightreed', 'MelvorBase:Watermelon', 'MelvorBase:SnapeGrass', 'MelvorBase:Tomato', 'MelvorBase:Carrot', 'MelvorBase:Pumpkin', 'MelvorBase:Cabbage', 'MelvorBase:Cauliflower'] },
+  bars5: { base: 'MelvorBase:SteelBar', items: ['MelvorBase:CopperBar', 'MelvorBase:IronBar', 'MelvorBase:SteelBar', 'MelvorBase:SilverBar', 'MelvorBase:GoldBar', 'MelvorBase:MithrilBar', 'MelvorBase:IronsteelBar', 'MelvorBase:AdamantiteBar', 'MelvorBase:RuniteBar', 'MelvorBase:DawnsteelBar', 'MelvorBase:DragoniteBar'] },
+  precious: { base: 'MelvorBase:SilverBar', items: ['MelvorBase:SilverBar', 'MelvorBase:GoldBar'] },
+  cloth: { base: 'MelvorBase:Wool', items: ['MelvorBase:Wool', 'MelvorBase:Silk'] },
   bones4: { base: 'MelvorBase:BigBone', items: ['MelvorBase:Bone', 'MelvorBase:BigBone', 'MelvorBase:LargeBone', 'MelvorBase:SmallDragonBone', 'MelvorBase:DragonBone', 'MelvorBase:LargeDragonBone'] },
 };
 
@@ -251,6 +256,33 @@ export const TIERS = [
       place('crypt', 'Crypt', { id: 'damageDealt', value: 2, text: '+2% damage dealt' }, [
         ['Donate ore for grave markers', 400, 'ore4', 'ore'], ['Donate bones for burial', 300, 'bones4', 'bones'],
         ['Defeat the undead', 200, UNDEAD], ['Descend the stairs', 30], ['Steal burial goods', 40]]),
+    ],
+  },
+  {
+    id: 't5',
+    name: 'Commerce, Prestige & Deep Grounds',
+    locations: [
+      place('treasury', 'Treasury', { id: 'sellPrice', value: 5, text: 'Items sell for 5% more gold' }, [
+        ['Donate ore for strongboxes', 500, 'ore4', 'ore'], ['Donate silver or gold bars for the coffers', 300, 'precious', 'bars'],
+        ['Defeat monsters raiding the vault', 100], ['Make audit runs', 30], ['Steal debts', 50]]),
+      place('vault', 'Vault', { id: 'bankSlots', value: 5, text: '+5 bank slots' }, [
+        ['Donate ore for fittings', 500, 'ore4', 'ore'], ['Donate metal bars for locks', 300, 'bars5', 'bars'],
+        ['Defeat monsters in the deep vault', 120], ['Test the seals', 25], ['Steal sealed chests', 40]]),
+      place('greathall', 'Great Hall', { id: 'xp:All', value: 2, text: '+2% XP in all skills' }, [
+        ['Donate logs for seating', 600, 'logs5', 'logs'], ['Donate crops for the feast', 400, 'crops5', 'crops'],
+        ['Defeat monsters at the banquet', 100], ['Run the hall', 30], ['Steal place settings', 40]]),
+      place('trophyhall', 'Trophy Hall', { id: 'lootDoubling', value: 3, text: '3% chance of double combat loot' }, [
+        ['Donate logs for trophy mounts', 500, 'logs5', 'logs'], ['Donate uncut gems for polish', 300, 'gems', 'gems'],
+        ['Defeat monsters for trophies', 150], ['Make display runs', 25], ['Steal lost heirlooms', 30]]),
+      place('infirmary', 'Infirmary', { id: 'foodHealing', value: 5, text: '+5% healing from food' }, [
+        ['Donate herbs', 400, 'herbs', 'herbs'], ['Donate wool or silk for bandages', 300, 'cloth', 'cloth'],
+        ['Defeat monsters in the ward', 90], ['Make stretcher runs', 30], ['Steal medical kits', 40]]),
+      place('dormitory', 'Dormitory', { id: 'maxHitpoints', value: 4, text: '+4% maximum hitpoints' }, [
+        ['Donate logs for bunks', 600, 'logs5', 'logs'], ['Donate wool or silk for linens', 400, 'cloth', 'cloth'],
+        ['Defeat monsters in the barracks', 80], ['Climb bunk ladders', 35], ['Steal room keys', 40]]),
+      place('dungeon', 'Dungeon', xp('Slayer', 5), [
+        ['Donate stone or ore for cells', 500, 'stone', 'stone'], ['Donate metal bars for shackles', 300, 'bars5', 'bars'],
+        ['Defeat monsters below', 250], ['Run the cell blocks', 30], ['Steal prisoner effects', 40]]),
     ],
   },
 ];
