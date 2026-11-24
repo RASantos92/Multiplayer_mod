@@ -5,12 +5,17 @@
 //
 // What it changes:
 //   1. Adds a static class "Melvor2ModBootstrap" with one method, Load(), which does
-//        try { AssemblyLoadContext.GetLoadContext(Assembly.GetExecutingAssembly())
-//                  .LoadFromAssemblyPath(BaseDirectory + "Melvor2.ModLoader.dll")
+//        try { string path = BaseDirectory + "Melvor2.ModLoader.dll";
+//              if (!File.Exists(path)) path = <folder of the game DLL itself> + "Melvor2.ModLoader.dll";
+//              AssemblyLoadContext.GetLoadContext(Assembly.GetExecutingAssembly())
+//                  .LoadFromAssemblyPath(path)
 //                  .GetType("Melvor2.ModLoader.Bootstrap").GetMethod("Start").Invoke(null, null); }
 //        catch (Exception) { }
 //   2. Inserts a call to Load() at the start of GamesByMalcs.Melvor2.Main's constructor.
 // If the loader DLL is missing the catch swallows the error and the game runs unmodded.
+//
+// The second place to look is for when another mod loader starts the game through Godot's override.cfg
+// (Melvor Mod Loader does): BaseDirectory is then that loader's folder, not the game's data folder.
 
 using Mono.Cecil;
 using Mono.Cecil.Cil;
@@ -75,6 +80,9 @@ try
 
     MethodReference getBaseDir = M(tAppContext, "get_BaseDirectory", tString, false);
     MethodReference combine = M(tPath, "Combine", tString, false, tString, tString);
+    MethodReference getDirName = M(tPath, "GetDirectoryName", tString, false, tString);
+    MethodReference fileExists = M(T("System.IO", "File"), "Exists", module.TypeSystem.Boolean, false, tString);
+    MethodReference getLocation = M(tAssembly, "get_Location", tString, true);
     // Godot loads the game (and GodotSharp, Steamworks.NET) into its own AssemblyLoadContext.
     // The loader must go into that same context; Assembly.LoadFrom would use the default context and
     // get a second, uninitialised copy of GodotSharp, which crashes on the first Godot call.
@@ -105,14 +113,28 @@ try
 
     ILProcessor il = load.Body.GetILProcessor();
     Instruction ret = il.Create(OpCodes.Ret);
-    Instruction tryStart = il.Create(OpCodes.Call, getExecuting);
+    Instruction tryStart = il.Create(OpCodes.Call, getBaseDir);
+    Instruction havePath = il.Create(OpCodes.Call, getExecuting);
     Instruction handlerStart = il.Create(OpCodes.Pop);
+    load.Body.InitLocals = true;
+    load.Body.Variables.Add(new VariableDefinition(tString));
 
     il.Append(tryStart);
-    il.Append(il.Create(OpCodes.Call, getLoadContext));
-    il.Append(il.Create(OpCodes.Call, getBaseDir));
     il.Append(il.Create(OpCodes.Ldstr, "Melvor2.ModLoader.dll"));
     il.Append(il.Create(OpCodes.Call, combine));
+    il.Append(il.Create(OpCodes.Stloc_0));
+    il.Append(il.Create(OpCodes.Ldloc_0));
+    il.Append(il.Create(OpCodes.Call, fileExists));
+    il.Append(il.Create(OpCodes.Brtrue, havePath));
+    il.Append(il.Create(OpCodes.Call, getExecuting));
+    il.Append(il.Create(OpCodes.Callvirt, getLocation));
+    il.Append(il.Create(OpCodes.Call, getDirName));
+    il.Append(il.Create(OpCodes.Ldstr, "Melvor2.ModLoader.dll"));
+    il.Append(il.Create(OpCodes.Call, combine));
+    il.Append(il.Create(OpCodes.Stloc_0));
+    il.Append(havePath);
+    il.Append(il.Create(OpCodes.Call, getLoadContext));
+    il.Append(il.Create(OpCodes.Ldloc_0));
     il.Append(il.Create(OpCodes.Callvirt, loadFromPath));
     il.Append(il.Create(OpCodes.Ldstr, "Melvor2.ModLoader.Bootstrap"));
     il.Append(il.Create(OpCodes.Callvirt, getType));
