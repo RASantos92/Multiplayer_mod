@@ -111,14 +111,17 @@ Good to know:
 
 **Guild Grounds**
 
-The **Guild Grounds** tab in the Guild window shows places you build up. Each place has five tasks. When you have done all five, you get that place's bonus for as long as you are in a guild.
+The **Guild Grounds** tab in the Guild window shows places your guild builds up together. Each place has five tasks. When the guild has done all five, every member gets that place's bonus for 30 days.
 
-- **Your progress is your own.** Only what you do and donate counts, and guild mates each have their own. It is the same in every guild you are in and you keep it if you change guilds.
+- **Progress belongs to the guild.** Everything members do and donate goes to the same tasks, and every member gets a finished place's bonus, including someone who joined yesterday.
+- **Amounts grow with the guild.** Each task needs its amount once for every member the guild has right now. A new member raises unfinished tasks and a member leaving lowers them.
+- **Bonuses last 30 days.** A finished place hides its tasks and shows a bar counting down. In the last 7 days the tasks come back at zero; finishing them again adds 30 days. If the time runs out first, the bonus stops until the tasks are done again.
+- **Who contributed:** each task bar is coloured by member. Hover over a colour to see the player and how much they gave. Guild mates can see what you contributed.
 
-- **Tasks you do by playing:** each one names something specific, such as defeating monsters in one combat area, trapping a certain animal, running a named Agility course, pickpocketing a certain target, or making, catching or harvesting certain items. They count by themselves, including what your character did while the game was closed. You keep whatever you make.
+- **Tasks you do by playing:** each one names something specific, such as defeating monsters in one combat area, trapping a certain animal, running a named Agility course, pickpocketing a certain target, or making, catching or harvesting certain items. They count by themselves, including what your character did while the game was closed, and they count for every guild you are in. You keep whatever you make.
 - **Tasks you donate to:** click **Donate**, pick an item from your bank and choose how many. Any item of the right kind is accepted, and better ones count for more: each step up counts 25% more, each step down 25% less. The panel shows what every item counts as.
 - **Donations are final.** The items leave your bank for good and cannot be taken back. You click the Donate button twice to confirm.
-- **Bonuses:** small passive bonuses such as +2% protection or 2% faster Fishing. They apply while the game is open and you are in at least one guild. Being in more guilds does not give more.
+- **Bonuses:** small passive bonuses such as +2% protection or 2% faster Fishing. They apply while the game is open and you are in the guild. The same bonus from two guilds does not add up.
 
 Good to know:
 
@@ -214,7 +217,7 @@ Uninstalling does not remove you from your guilds. To erase your guild data from
 - **Friends chat is invite-only.** It uses a private Steam lobby that only people you invite can join.
 - **It does not touch your account.** The mod does not use the game's cloud login and does not read or send your save.
 - **Guilds are opt-in.** Nothing goes to the guild server until you click **Enable Guilds**.
-- **Guild Grounds change your character.** Donated items are removed from your bank for good, and finished locations give small real bonuses (combat stats, Fishing and Ranching speed) while the game is open.
+- **Guild Grounds change your character.** Donated items are removed from your bank for good, and locations the guild finishes give small real bonuses (combat stats, Fishing and Ranching speed) while the game is open.
 - **The marketplace moves real items and gold.** A trade cannot be undone by the mod. If a save is rolled back after a trade (an old backup, or the cloud save replacing the local one), items or gold can end up duplicated or lost; the mod cannot detect that. Trade with people you trust.
 - **The party bonus is real XP, and shared fights give real loot.** The bonuses themselves are temporary and never written to your save, but the extra XP, kills and loot you earn with them stay on your character like any other.
 - **It is easy to undo.** The original game file is kept and the uninstall line puts it back.
@@ -241,7 +244,7 @@ Once you click **Enable Guilds**, the mod sends:
 - all your skill levels and the gear you have equipped
 - while you are fighting: your health, damage per second, combat level, attack speed and chance to hit
 - your marketplace listings and offers: the item, quantity and price
-- for Guild Grounds: for the things its tasks ask for, how many you did since the last report (monsters defeated, animals trapped, Agility courses, Thieving targets, and items made, gathered, burned or buried), and the items you donate
+- for Guild Grounds: for the things its tasks ask for, how many you did since the last report (monsters defeated, animals trapped, Agility courses, Thieving targets, and items made, gathered, burned or buried), and the items you donate; guild mates can see how much you contributed to each task
 
 It never sends your save, your bank, or anything about your Steam or game account. Other members of your guilds can see your name, rank, online status, current action, skill levels, equipped gear and, while you fight, your health and damage.
 

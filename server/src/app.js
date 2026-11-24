@@ -3,7 +3,7 @@
 // { status, body }.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { ObjectId } from 'mongodb';
-import { bonusesOf, createGrounds } from './grounds.js';
+import { createGrounds } from './grounds.js';
 import { createMarket } from './market.js';
 
 export const PROTOCOL = 1;
@@ -475,19 +475,6 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       const [, memberships] = await Promise.all([rate(me, 'sync'), store.membershipsOf(me)]);
       const gids = memberships.map((m) => m.guild._id);
 
-      // Guild Grounds counts (kills, laps, thieving) ride along; each numbered batch is applied once.
-      // Progress and bonuses are the player's own, and only apply while they are in a guild.
-      let groundsAck = null;
-      let mine = self;
-      if (body.grounds !== undefined) {
-        const counted = await grounds.applyCounts(self, body.grounds);
-        groundsAck = counted.ack;
-        mine = counted.player;
-      } else if (gids.length && !self.groundsSeeded) {
-        mine = await grounds.ready(self);
-      }
-      const myBonuses = bonusesOf(mine);
-
       // Chat comes from the player's guilds and, if they opted in, the tester chat.
       const channels = self.testers ? [...gids, TESTERS_ID] : gids;
       const [roster, fetched, reqs] = await Promise.all([
@@ -499,6 +486,19 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       ]);
       await market.sweep();
       const claims = await market.pendingClaims(me);
+
+      // Guild Grounds belong to the guild. Counts (kills, laps, thieving) ride along and go to every
+      // guild I am in; each numbered batch is applied once.
+      const rows = new Map(gids.map((g) => [String(g), []]));
+      for (const m of roster) rows.get(String(m.guildId))?.push(m);
+      let groundsOf = await Promise.all(memberships.map(({ guild }) => grounds.pool(guild, rows.get(String(guild._id)))));
+      let groundsAck = null;
+      if (body.grounds !== undefined) {
+        const counted = await grounds.applyCounts(self, body.grounds,
+          groundsOf.map((guild) => ({ guild, members: rows.get(String(guild._id)).length })));
+        groundsAck = counted.ack;
+        groundsOf = counted.guilds;
+      }
 
       // The cursor is "<newest timestamp seen>-<ids seen inside the overlap window>". Each
       // poll re-reads the last couple of seconds so a message whose insert landed slightly
@@ -525,14 +525,14 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       return {
         now: t,
         cursor,
-        guilds: memberships.map(({ member, guild }) => ({
+        guilds: memberships.map(({ member, guild }, i) => ({
           id: String(guild._id),
           name: guild.name,
           rank: rankOf(guild, member),
           marketRev: guild.marketRev ?? 0,
-          // The same in every guild: the game takes the largest of each bonus, so nothing counts twice.
-          groundsRev: mine.groundsRev ?? 0,
-          bonuses: myBonuses,
+          // The game takes the largest of each bonus over my guilds, so nothing counts twice.
+          groundsRev: grounds.revOf(groundsOf[i], t),
+          bonuses: grounds.bonusesOf(groundsOf[i], t),
           members: sortMembers(byGuild.get(String(guild._id))),
         })),
         claims,
@@ -549,7 +549,8 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       if ((await store.countGuildsOf(me)) >= L.maxGuildsPerPlayer) {
         throw conflict('guild_limit', `You can be in at most ${L.maxGuildsPerPlayer} guilds`);
       }
-      const doc = { name, nameLower: name.toLowerCase(), description, ownerId: me, createdAt: new Date(now()) };
+      // A new guild has no progress from before guilds shared their grounds to start from.
+      const doc = { name, nameLower: name.toLowerCase(), description, ownerId: me, createdAt: new Date(now()), groundsPooled: true };
       const gid = await store.insertGuild(doc);
       if (!gid) throw conflict('name_taken', 'A guild with that name already exists');
       try {
@@ -798,6 +799,7 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       await store.deleteMember(ctx.gid, me);
       await market.closeListings({ guildId: ctx.gid, sellerId: me }, 'left_guild');
       await store.deleteOffers({ guildId: ctx.gid, buyerId: me });
+      await grounds.memberLeft(ctx.gid);
       return { ok: true };
     },
 
@@ -810,6 +812,7 @@ export function createApp({ store, limits = {}, now = () => Date.now(), config =
       await store.deleteMember(ctx.gid, t.target);
       await market.closeListings({ guildId: ctx.gid, sellerId: t.target }, 'left_guild');
       await store.deleteOffers({ guildId: ctx.gid, buyerId: t.target });
+      await grounds.memberLeft(ctx.gid);
       return { ok: true };
     },
 

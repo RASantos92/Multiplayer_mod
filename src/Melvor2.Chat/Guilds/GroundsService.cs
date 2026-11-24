@@ -17,12 +17,20 @@ internal sealed record GroundsTask(string Id, string Kind, string Text, long Nee
     public bool Done => Have >= Need;
 }
 
-internal sealed record GroundsLocation(string Id, string Name, string BonusId, string BonusText, bool Done, List<GroundsTask> Tasks);
+/// <summary>
+/// One location. <see cref="Done"/> is true while its bonus is on. <see cref="State"/> is "open" (tasks to do,
+/// no bonus), "active" (bonus on, tasks hidden) or "renew" (bonus on, and the tasks are back so the guild can
+/// extend it). <see cref="Until"/> is when the bonus ends and <see cref="RenewFrom"/> when the tasks come
+/// back, both in server milliseconds, 0 without a bonus.
+/// </summary>
+internal sealed record GroundsLocation(string Id, string Name, string BonusId, string BonusText, bool Done, List<GroundsTask> Tasks,
+    string State, long Until, long RenewFrom);
 
 internal sealed record GroundsTier(string Name, List<GroundsLocation> Locations);
 
 /// <summary>
-/// Guild Grounds: the player's own tasks at locations, and the bonus each finished location gives.
+/// Guild Grounds: the tasks a guild works through together at locations, and the bonus each finished location
+/// gives every member for a month.
 ///
 ///   - Counting: each task that is done by playing names one of the game's lifetime counters (monsters killed,
 ///     courses completed, items made by a skill...) and, usually, which monsters, courses or items count. Every
@@ -144,7 +152,10 @@ internal sealed class GroundsService
                             t.Str("stat"),
                             t.TryGetProperty("ids", out JsonElement ids) && ids.ValueKind == JsonValueKind.Array
                                 ? ids.EnumerateArray().Where(i => i.ValueKind == JsonValueKind.String).Select(i => i.GetString()!).ToList()
-                                : new List<string>())).ToList());
+                                : new List<string>())).ToList(),
+                        // A server from before 0.7 has no states: finished is finished.
+                        loc.Str("state") is { Length: > 0 } state ? state : done ? "active" : "open",
+                        loc.Long("until"), loc.Long("renewFrom"));
                 }).ToList())).ToList();
             NoteWanted(Tiers[guildId]);
             Changed?.Invoke();

@@ -9,12 +9,23 @@ namespace Melvor2.Chat;
 
 /// <summary>
 /// The Guild Grounds tab of the Guild window: the guild's locations, the five tasks at each with a progress
-/// bar, the bonus a finished location gives, and a panel to donate items from the bank to a task.
+/// bar coloured by who contributed, the bonus a finished location gives and how long it still lasts, and a
+/// panel to donate items from the bank to a task.
 /// </summary>
 internal sealed partial class GuildWindow
 {
     private static readonly Color s_green = new(0.45f, 0.9f, 0.45f);
     private static readonly Color s_dim = new(0.75f, 0.72f, 0.66f);
+    private static readonly Color s_others = new(0.55f, 0.55f, 0.55f);
+
+    /// <summary>One colour per contributor on a task's bar; far apart so neighbours are easy to tell.</summary>
+    private static readonly Color[] s_palette =
+    {
+        new(0.30f, 0.69f, 0.31f), new(0.26f, 0.59f, 0.98f), new(1.00f, 0.76f, 0.03f), new(0.91f, 0.30f, 0.24f),
+        new(0.67f, 0.40f, 0.86f), new(0.10f, 0.74f, 0.74f), new(1.00f, 0.55f, 0.20f), new(0.93f, 0.45f, 0.70f),
+    };
+
+    private const long DayMs = 24L * 60 * 60 * 1000;
 
     private bool _grounds;
     private Button _groundsButton = null!;
@@ -75,11 +86,22 @@ internal sealed partial class GuildWindow
         }
         _donateTask = null;
 
-        _page.AddChild(Text("These are your own tasks. Finish all five at a location and you get its bonus while you are in a guild. Your progress is the same in every guild you are in. "
-            + "Tasks without a Donate button count by themselves as you play, also while the game is closed, and you keep what you make. Donated items are gone for good."));
+        int size = Math.Max(1, _service.Members.TryGetValue(guild.Id, out List<MemberInfo>? roster) ? roster.Count : 1);
+        _page.AddChild(Text("The guild works on these tasks together. Finish all five at a location and every member gets its bonus for 30 days; "
+            + "in the last 7 days the tasks come back so the guild can add another 30. Amounts grow with the guild: they are for "
+            + size + (size == 1 ? " member" : " members") + " now. "
+            + "Tasks without a Donate button count by themselves as you play, also while the game is closed, and you keep what you make. Donated items are gone for good. "
+            + "Hover over a bar to see who contributed."));
+
+        // Each member keeps one colour on every bar.
+        var colours = new Dictionary<string, Color>();
+        foreach (MemberInfo member in (roster ?? new List<MemberInfo>()).OrderBy(m => m.Id, StringComparer.Ordinal))
+        {
+            colours[member.Id] = s_palette[colours.Count % s_palette.Length];
+        }
 
         // By default only the first tier that still has work is open; clicks are remembered while the game runs.
-        int firstOpen = tiers.FindIndex(t => t.Locations.Any(l => !l.Done));
+        int firstOpen = tiers.FindIndex(t => t.Locations.Any(l => l.State != "active"));
         for (int number = 0; number < tiers.Count; number++)
         {
             GroundsTier tier = tiers[number];
@@ -95,22 +117,34 @@ internal sealed partial class GuildWindow
             {
                 _page.AddChild(new HSeparator());
                 string key = "loc:" + location.Id;
-                // Finished locations fold away by themselves.
-                bool open = _groundsOpen.TryGetValue(key, out bool picked) ? picked : !location.Done;
+                bool active = location.State == "active";
                 bool known = GroundsBonus.Knows(location.BonusId);
-                Button name = Fold(open, location.Name + "   (" + location.Tasks.Count(t => t.Done) + "/" + location.Tasks.Count + ")", 17, key);
                 Label bonus = Short(location.Done
                     ? (known ? "Bonus active: " : "Bonus earned (update the mod to receive it): ") + location.BonusText
                     : "Reward: " + location.BonusText);
                 bonus.Modulate = location.Done && known ? s_green : s_dim;
                 bonus.HorizontalAlignment = HorizontalAlignment.Right;
+
+                if (active)
+                {
+                    // Nothing to do here until the last week: just the name and how long the bonus lasts.
+                    Label built = Text(location.Name + "   (built)");
+                    built.AddThemeFontSizeOverride("font_size", 17);
+                    _page.AddChild(Row(built, Grow(bonus)));
+                    AddCountdown(location, "The tasks come back for the last 7 days, so the guild can add another 30.");
+                    continue;
+                }
+
+                bool open = _groundsOpen.TryGetValue(key, out bool picked) ? picked : true;
+                Button name = Fold(open, location.Name + "   (" + location.Tasks.Count(t => t.Done) + "/" + location.Tasks.Count + ")", 17, key);
                 _page.AddChild(Row(name, Grow(bonus)));
+                if (location.State == "renew") AddCountdown(location, "Finish the tasks again to add 30 days. If the time runs out first, the bonus stops until they are done.");
                 if (!open) continue;
 
                 var table = new GridContainer { Columns = 4, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
                 table.AddThemeConstantOverride("h_separation", 12);
                 table.AddThemeConstantOverride("v_separation", 4);
-                foreach (GroundsTask task in location.Tasks) AddTaskRow(table, grounds, task);
+                foreach (GroundsTask task in location.Tasks) AddTaskRow(table, grounds, task, colours);
                 _page.AddChild(table);
             }
             _page.AddChild(new HSeparator());
@@ -138,9 +172,97 @@ internal sealed partial class GuildWindow
         return button;
     }
 
-    private void AddTaskRow(GridContainer table, GroundsService grounds, GroundsTask task)
+    /// <summary>A bar that empties as a location's 30 days run out, with the time left beside it.</summary>
+    private void AddCountdown(GroundsLocation location, string hint)
     {
-        string givers = task.Done ? "Done." : "Only what you do yourself counts.";
+        if (location.Until <= 0) return; // a server from before bonuses ran out
+        long left = Math.Max(0, location.Until - _service.ServerNow);
+        var bar = new ProgressBar
+        {
+            MinValue = 0,
+            MaxValue = Math.Max(30 * DayMs, left),
+            Value = left,
+            ShowPercentage = false,
+            CustomMinimumSize = new Vector2(0, 12),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+            TooltipText = hint,
+        };
+        long days = left / DayMs;
+        long hours = left / (60 * 60 * 1000);
+        string time = days >= 2 ? days + " days left" : hours >= 2 ? hours + " hours left" : "less than 2 hours left";
+        Label label = Short(location.State == "renew" ? time + ": renew now" : time);
+        label.CustomMinimumSize = new Vector2(190, 0);
+        label.HorizontalAlignment = HorizontalAlignment.Right;
+        label.Modulate = location.State == "renew" ? new Color(1f, 0.76f, 0.3f) : s_dim;
+        label.TooltipText = hint;
+        label.MouseFilter = Control.MouseFilterEnum.Stop;
+        _page.AddChild(Row(bar, label));
+    }
+
+    /// <summary>
+    /// A task's progress bar, split into one coloured piece per contributor (the largest first) and a grey one
+    /// for everyone the server did not list. Hovering a piece names the player and what they gave.
+    /// </summary>
+    private static Control GiverBar(GroundsTask task, Dictionary<string, Color> colours, string summary)
+    {
+        long need = Math.Max(1, task.Need);
+        long have = Math.Clamp(task.Have, 0, need);
+        var pieces = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Pass };
+        pieces.AddThemeConstantOverride("separation", 0);
+
+        void Piece(long amount, Color colour, string tip)
+        {
+            if (amount <= 0) return;
+            pieces.AddChild(new ColorRect
+            {
+                Color = colour,
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+                SizeFlagsStretchRatio = amount,
+                TooltipText = tip,
+                MouseFilter = Control.MouseFilterEnum.Stop,
+            });
+        }
+
+        long shown = 0;
+        int spare = 0;
+        foreach (GroundsGiver giver in task.Top)
+        {
+            long amount = Math.Min(giver.Amount, have - shown);
+            if (amount <= 0) break;
+            if (!colours.TryGetValue(giver.Id, out Color colour))
+            {
+                // Someone who has left the guild since.
+                colour = s_palette[(colours.Count + spare++) % s_palette.Length].Darkened(0.35f);
+            }
+            Piece(amount, colour, giver.Name + ": " + GroundsService.Amount(giver.Amount) + " (" + (giver.Amount * 100 / need) + "% of the task)");
+            shown += amount;
+        }
+        Piece(have - shown, s_others, (task.Top.Count > 0 ? "Other members: " : "The guild: ") + GroundsService.Amount(have - shown));
+        Piece(need - have, new Color(0, 0, 0, 0), summary);
+
+        var frame = new PanelContainer
+        {
+            CustomMinimumSize = new Vector2(150, 16),
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+            TooltipText = summary,
+        };
+        frame.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        {
+            BgColor = new Color(0.08f, 0.08f, 0.08f, 0.85f),
+            BorderColor = new Color(0, 0, 0, 0.9f),
+            BorderWidthLeft = 1, BorderWidthTop = 1, BorderWidthRight = 1, BorderWidthBottom = 1,
+            ContentMarginLeft = 1, ContentMarginTop = 1, ContentMarginRight = 1, ContentMarginBottom = 1,
+        });
+        frame.AddChild(pieces);
+        return frame;
+    }
+
+    private void AddTaskRow(GridContainer table, GroundsService grounds, GroundsTask task, Dictionary<string, Color> colours)
+    {
+        string givers = task.Top.Count == 0
+            ? (task.Done ? "Done." : "Nobody has contributed yet.")
+            : string.Join("\n", task.Top.Select(g => g.Name + ": " + GroundsService.Amount(g.Amount)));
 
         Label text = Text(task.Text);
         text.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -149,17 +271,7 @@ internal sealed partial class GuildWindow
         if (task.Done) text.Modulate = s_green;
         table.AddChild(text);
 
-        var bar = new ProgressBar
-        {
-            MinValue = 0,
-            MaxValue = Math.Max(1, task.Need),
-            Value = Math.Min(task.Have, task.Need),
-            ShowPercentage = false,
-            CustomMinimumSize = new Vector2(150, 16),
-            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
-            TooltipText = givers,
-        };
-        table.AddChild(bar);
+        table.AddChild(GiverBar(task, colours, givers));
 
         Label count = Short(GroundsService.Amount(Math.Min(task.Have, task.Need)) + " / " + GroundsService.Amount(task.Need));
         count.HorizontalAlignment = HorizontalAlignment.Right;

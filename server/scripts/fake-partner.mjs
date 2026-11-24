@@ -34,8 +34,8 @@ const fakeName = take('--name', 'Test Partner');
 const fakeInterval = Number(take('--interval', '3000'));
 const fakeLevel = take('--level', null);
 // --grounds: also work on its own Guild Grounds. Every round it reports a few kills, laps and thieving
-// successes and donates some base items to the first unfinished donation task. Progress is per player,
-// so this exercises the server but does not move anyone else's bars.
+// successes and donates some base items to the first unfinished donation task. Progress belongs to
+// the guild, so this moves the bars every member sees.
 const groundsAt = args.indexOf('--grounds');
 const doGrounds = groundsAt >= 0;
 if (doGrounds) args.splice(groundsAt, 1);
