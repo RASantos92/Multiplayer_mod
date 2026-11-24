@@ -198,6 +198,7 @@ Uninstalling does not remove you from your guilds. To erase your guild data from
 | "Melvor Idle 2 is running" | Close the game completely, then run the install line again. |
 | "Could not find Melvor Idle 2" | Install the game through Steam first. If it is installed, use the manual install below. |
 | No Guild button or chat icon in the game | Load a save first; they only show in game. If still missing, run the install line again. Game updates remove the mod. |
+| No Guild button, and you also use **Melvor Mod Loader** | Versions before 0.7.1 did not load when that loader was installed. Close the game and run the install line again. The two work side by side from 0.7.1. |
 | Friends chat invite does nothing | Use **Copy ID** and `/join` as described above. |
 | A member's profile says they have not shared one | They are on an older version. They need to run the install line again. |
 | No party bonus | You both need the latest version, both online, on the exact same action. Give it a minute. |
