@@ -1,14 +1,17 @@
-// Guild Grounds handlers. Each player works through tasks at locations; when a player has done every
-// task at a location, they get its bonus while they are in a guild. Progress belongs to the player:
-// it is the same in every guild they are in, so a bonus can never count twice.
+// Guild Grounds handlers. A guild works through tasks at locations together. When every task at a
+// location is done, every member gets its bonus for 30 days; then the guild has to do the tasks again.
 //
-// Up to 0.6.1 progress was shared by a guild. The first time a player is seen after that, their own
-// progress starts from what they personally contributed back then (see `seed`).
+//   amounts  a task needs its listed amount once for every member the guild has right now.
+//   states   a location is OPEN (tasks showing, no bonus), ACTIVE (bonus on, tasks hidden, nothing is
+//            counted for it) or, in the last week of its bonus, RENEWING (bonus on, tasks back at
+//            nothing; finishing them adds another 30 days to the end date).
+//   donate   the member's game removes the items from the bank, then POSTs the donation. The reply
+//            says how many were accepted; the game puts the rest back.
+//   counts   what members do by playing (kills, laps, items made...) rides on /sync as numbered batches
+//            of how much the game's own counters grew. A batch counts for every guild the player is in.
 //
-//   donate  the member's game removes the items from the bank, then POSTs the donation. The reply
-//           says how many were accepted; the game puts the rest back.
-//   counts  what members do by playing (kills, laps, items made...) rides on /sync as numbered batches
-//           of how much the game's own counters grew.
+// From 0.6.2 to 0.6.5 progress belonged to each player. A guild from that time starts with its
+// members' own progress added together (see `pool`).
 //
 // The server cannot see anyone's game: counts and donations are taken on trust, within sanity limits.
 import { HttpError } from './app.js';
@@ -18,14 +21,19 @@ export const GROUNDS_LIMITS = {
   maxQty: 1_000_000, // items in one donation
   maxCount: 100_000, // one counter entry in one batch, and one task's gain from one batch
   maxEntries: 60, // counter entries in one batch
-  topContributors: 5,
+  topContributors: 8,
+  bonusMs: 30 * 24 * 60 * 60 * 1000, // how long a finished location's bonus lasts
+  renewMs: 7 * 24 * 60 * 60 * 1000, // how long before the end the tasks come back
 };
 
 const UNIT = 1000; // progress is stored in thousandths so item worths stay whole numbers
+// Guild revisions start above any a player had, so every game reloads its view once.
+const FIRST_REV = 2_000_000;
 const GAME_ID_RE = /^[A-Z][A-Za-z0-9]*:[A-Z][A-Za-z0-9_]*$/;
 const NONCE_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const bad = (code, message) => new HttpError(400, code, message);
 const isInt = (v, min, max) => Number.isSafeInteger(v) && v >= min && v <= max;
+const ms = (d) => (d ? new Date(d).getTime() : 0);
 
 /** What one of each item in a group is worth, in thousandths of the base item. */
 export function worths(group) {
@@ -36,66 +44,113 @@ export function worths(group) {
 
 const LOCATIONS = TIERS.flatMap((tier) => tier.locations);
 const TASKS = new Map(LOCATIONS.flatMap((loc) => loc.tasks.map((task) => [task.id, task])));
+const PLACE = new Map(LOCATIONS.flatMap((loc) => loc.tasks.map((task) => [task.id, loc])));
 const WORTHS = new Map(Object.keys(GROUPS).map((g) => [g, worths(g)]));
-const BONUS = new Map(LOCATIONS.map((loc) => [loc.id, loc.bonus]));
-
-/** The bonuses a player has earned, for /sync: [{id, value}] with `value` in percent. */
-export function bonusesOf(player) {
-  // Two locations with the same kind of bonus add up.
-  const sum = new Map();
-  for (const id of player.groundsDone ?? []) {
-    const b = BONUS.get(id);
-    if (b) sum.set(b.id, (sum.get(b.id) ?? 0) + b.value);
-  }
-  return [...sum].map(([id, value]) => ({ id, value }));
-}
 
 export function createGrounds({ store, now, guildCtx, requireRank, limits = {} }) {
   const G = { ...GROUNDS_LIMITS, ...limits };
 
-  const doneIn = (p) => LOCATIONS.filter((loc) => loc.tasks.every((t) => (p[t.id] ?? 0) >= t.need * UNIT)).map((loc) => loc.id);
+  const untilOf = (guild, loc) => ms(guild.groundsDone?.[loc.id]);
+  /** 'open', 'active' or 'renew' (see the top of this file). */
+  function phase(guild, loc, t) {
+    const until = untilOf(guild, loc);
+    if (!until || t >= until) return 'open';
+    return t >= until - G.renewMs ? 'renew' : 'active';
+  }
+  const needOf = (task, members) => task.need * UNIT * Math.max(1, members);
 
-  /**
-   * Makes sure the player has their own progress, and returns the player document as it is afterwards.
-   * A player from the time of shared guild progress starts from what they contributed themselves:
-   * donations added up over their guilds, and counts taken from the guild where they had the most
-   * (a count went to every guild they were in, so adding those up would count it twice).
-   */
-  async function seed(player) {
-    if (player.groundsSeeded) return player;
-    const p = {};
-    for (const doc of await store.groundsTotalsOf(player._id)) {
-      for (const [id, n] of Object.entries(doc.t ?? {})) {
-        const task = TASKS.get(id);
-        if (!task || !(n > 0)) continue;
-        const had = p[id] ?? 0;
-        p[id] = Math.min(task.need * UNIT, task.kind === 'donate' ? had + n : Math.max(had, n));
-      }
+  /** The bonuses a guild has right now, for /sync: [{id, value}] with `value` in percent. */
+  function bonusesOf(guild, t = now()) {
+    // Two locations with the same kind of bonus add up.
+    const sum = new Map();
+    for (const loc of LOCATIONS) {
+      if (untilOf(guild, loc) > t) sum.set(loc.bonus.id, (sum.get(loc.bonus.id) ?? 0) + loc.bonus.value);
     }
-    await store.insertMyGrounds(player._id, p);
-    return (await store.markGroundsSeeded(player._id, doneIn(p))) ?? player;
+    return [...sum].map(([id, value]) => ({ id, value }));
   }
 
   /**
-   * Adds progress (`adds`: Map of task id to thousandths) to a player's own grounds.
-   * Returns { accepted: Map(task -> thousandths), player } with the player document afterwards.
+   * The number games compare to know their view is out of date. Besides real changes it moves when a
+   * location's tasks come back and when its bonus ends, which happen with the clock alone.
    */
-  async function apply(player, adds) {
-    player = await seed(player);
-    const list = [...adds].filter(([, add]) => add > 0).map(([task, add]) => ({ task, add, need: TASKS.get(task).need * UNIT }));
-    const accepted = new Map();
-    if (!list.length) return { accepted, player };
+  function revOf(guild, t = now()) {
+    let rev = guild.groundsRev ?? 0;
+    for (const loc of LOCATIONS) {
+      const until = untilOf(guild, loc);
+      if (until) rev += t >= until ? 2 : t >= until - G.renewMs ? 1 : 0;
+    }
+    return rev;
+  }
 
-    const before = await store.addMyGroundsProgress(player._id, list);
+  /**
+   * Finishes every location whose tasks have all reached the guild's current amounts.
+   * `p` is the guild's progress. Returns the guild document as it is afterwards.
+   */
+  async function settle(guild, members, p, t) {
+    for (const loc of LOCATIONS) {
+      if (phase(guild, loc, t) === 'active') continue;
+      if (!loc.tasks.every((task) => (p[task.id] ?? 0) >= needOf(task, members))) continue;
+      const was = guild.groundsDone?.[loc.id] ?? null;
+      // Renewed in time, the new 30 days start where the old ones end.
+      const until = new Date(Math.max(t, ms(was)) + G.bonusMs);
+      const after = await store.completeLocation(guild._id, loc.id, was, until, loc.tasks.map((task) => task.id));
+      if (after) guild = after;
+    }
+    return guild;
+  }
+
+  /**
+   * Starts a guild off, once: its members' own progress from 0.6.2 to 0.6.5 added together.
+   * `roster` is the guild's member rows. Returns the guild document as it is afterwards.
+   */
+  async function pool(guild, roster) {
+    if (guild.groundsPooled) return guild;
+    const ids = roster.map((m) => m.playerId);
+    const p = {};
+    const given = [];
+    for (const doc of ids.length ? await store.myGroundsOf(ids) : []) {
+      const t = {};
+      for (const [id, n] of Object.entries(doc.p ?? {})) {
+        const task = TASKS.get(id);
+        if (!task || !(n > 0)) continue;
+        const room = needOf(task, ids.length) - (p[id] ?? 0);
+        const got = Math.min(room, n);
+        if (got <= 0) continue;
+        p[id] = (p[id] ?? 0) + got;
+        t[id] = got;
+      }
+      if (Object.keys(t).length) given.push({ playerId: doc._id, t });
+    }
+    await store.insertGuildGrounds(guild._id, p, given);
+    const marked = await store.markGroundsPooled(guild._id, FIRST_REV);
+    if (!marked) return (await store.getGuild(guild._id)) ?? guild; // someone else got there first
+    return settle(marked, ids.length, await store.guildGrounds(guild._id), now());
+  }
+
+  /**
+   * Adds a player's progress (`adds`: Map of task id to thousandths) to a guild's grounds.
+   * Returns { accepted: Map(task -> thousandths), guild } with the guild document afterwards.
+   */
+  async function apply(guild, members, playerId, adds, t) {
+    const list = [...adds]
+      .filter(([task, add]) => add > 0 && phase(guild, PLACE.get(task), t) !== 'active')
+      .map(([task, add]) => ({ task, add, need: needOf(TASKS.get(task), members) }));
+    const accepted = new Map();
+    if (!list.length) return { accepted, guild };
+
+    const before = await store.addGuildProgress(guild._id, list);
     const after = { ...before };
     for (const { task, add, need } of list) {
-      const had = Math.min(need, before[task] ?? 0);
-      const got = Math.min(need, had + add) - had;
+      const had = before[task] ?? 0;
+      const got = Math.max(0, Math.min(need, had + add) - had);
       after[task] = had + got;
       if (got > 0) accepted.set(task, got);
     }
-    if (!accepted.size) return { accepted, player };
-    return { accepted, player: (await store.bumpMyGrounds(player._id, doneIn(after))) ?? player };
+    if (!accepted.size) return { accepted, guild };
+    await store.addGiven(guild._id, playerId, Object.fromEntries(accepted));
+    const settled = await settle(guild, members, after, t);
+    // Finishing a location already marks the grounds as changed.
+    return { accepted, guild: settled !== guild ? settled : (await store.bumpGrounds(guild._id)) ?? guild };
   }
 
   /** `{counterId: {objectId: n}}` from a batch as a Map of Maps, dropping anything malformed. */
@@ -117,15 +172,25 @@ export function createGrounds({ store, now, guildCtx, requireRank, limits = {} }
   }
 
   const h = {
-    // The same answer whichever of the player's guilds is asked: progress is the player's own.
-    async view({ me, player, params }) {
+    async view({ me, params }) {
       const ctx = await guildCtx(params.id, me);
       requireRank(ctx, 'owner', 'officer', 'member');
-      player = await seed(player);
-      const p = (await store.getMyGrounds(me))?.p ?? {};
-      const taskOut = (task) => {
-        const need = task.need * UNIT;
-        const have = Math.min(need, p[task.id] ?? 0);
+      const t = now();
+      const roster = await store.rosters([ctx.gid]);
+      const members = roster.length;
+      let guild = await pool(ctx.guild, roster);
+      // Catches a location that a member's leaving has finished.
+      guild = await settle(guild, members, await store.guildGrounds(ctx.gid), t);
+      const [p, givers] = await Promise.all([store.guildGrounds(ctx.gid), store.giversOf(ctx.gid)]);
+      const names = new Map(roster.map((m) => [m.playerId, m.name]));
+
+      const taskOut = (task, hidden) => {
+        const need = needOf(task, members);
+        const have = hidden ? need : Math.min(need, p[task.id] ?? 0);
+        const gave = hidden ? [] : givers
+          .map((g) => ({ id: g.playerId, name: names.get(g.playerId) ?? 'Former member', amount: g.t?.[task.id] ?? 0 }))
+          .filter((g) => g.amount > 0)
+          .sort((a, b) => b.amount - a.amount);
         return {
           id: task.id,
           kind: task.kind,
@@ -136,20 +201,32 @@ export function createGrounds({ store, now, guildCtx, requireRank, limits = {} }
           ...(task.stat ? { stat: task.stat } : {}),
           ...(task.ids ? { ids: task.ids } : {}),
           ...(task.area ? { area: task.area } : {}),
-          // Kept for 0.6.0 and 0.6.1, which showed a guild's contributors.
-          mine: have,
-          top: [],
+          mine: gave.find((g) => g.id === me)?.amount ?? 0,
+          top: gave.slice(0, G.topContributors),
         };
       };
       return {
-        rev: player.groundsRev ?? 0,
+        rev: revOf(guild, t),
         unit: UNIT,
+        members,
         tiers: TIERS.map((tier) => ({
           id: tier.id,
           name: tier.name,
           locations: tier.locations.map((loc) => {
-            const tasks = loc.tasks.map(taskOut);
-            return { id: loc.id, name: loc.name, bonus: loc.bonus, done: tasks.every((t) => t.have >= t.need), tasks };
+            const state = phase(guild, loc, t);
+            const until = state === 'open' ? 0 : untilOf(guild, loc);
+            return {
+              id: loc.id,
+              name: loc.name,
+              bonus: loc.bonus,
+              // True while the bonus is on. An active location's tasks are sent as complete, which is
+              // what games before 0.7 show for a finished location.
+              done: state !== 'open',
+              state,
+              until,
+              renewFrom: until ? until - G.renewMs : 0,
+              tasks: loc.tasks.map((task) => taskOut(task, state === 'active')),
+            };
           }),
         })),
       };
@@ -157,7 +234,7 @@ export function createGrounds({ store, now, guildCtx, requireRank, limits = {} }
 
     // The donor's game has already removed `qty` of `item`. Replies with how many were accepted;
     // the game puts the others back. The same nonce always gets the same answer.
-    async donate({ me, player, params, body }) {
+    async donate({ me, params, body }) {
       const ctx = await guildCtx(params.id, me);
       requireRank(ctx, 'owner', 'officer', 'member');
       const task = TASKS.get(body.task);
@@ -167,17 +244,20 @@ export function createGrounds({ store, now, guildCtx, requireRank, limits = {} }
       if (!isInt(body.qty, 1, G.maxQty)) throw bad('bad_qty', `Quantity must be 1 to ${G.maxQty}`);
       if (typeof body.nonce !== 'string' || !NONCE_RE.test(body.nonce)) throw bad('bad_nonce', 'Missing donation id');
 
+      const t = now();
       const giftId = await store.insertGift({
-        playerId: me, nonce: body.nonce, guildId: ctx.gid, task: task.id, item: body.item, qty: body.qty, accepted: null, at: new Date(now()),
+        playerId: me, nonce: body.nonce, guildId: ctx.gid, task: task.id, item: body.item, qty: body.qty, accepted: null, at: new Date(t),
       });
       if (!giftId) {
         // Sent before. If that attempt never finished, nothing is accepted now: the game refunds the
-        // items, and the player keeps any progress the first attempt did record.
+        // items, and the guild keeps any progress the first attempt did record.
         const old = await store.getGift(me, body.nonce);
         return { accepted: old?.accepted ?? 0, qty: old?.qty ?? body.qty };
       }
 
-      const { accepted } = await apply(player, new Map([[task.id, body.qty * worth]]));
+      const roster = await store.rosters([ctx.gid]);
+      const guild = await pool(ctx.guild, roster);
+      const { accepted } = await apply(guild, roster.length, me, new Map([[task.id, body.qty * worth]]), t);
       const points = accepted.get(task.id) ?? 0;
       // A trimmed donation takes just enough items to finish the task.
       const qty = points >= body.qty * worth ? body.qty : Math.ceil(points / worth);
@@ -187,15 +267,20 @@ export function createGrounds({ store, now, guildCtx, requireRank, limits = {} }
   };
 
   return {
+    bonusesOf,
+    revOf,
+    pool,
     /**
      * Counts from /sync: `{seq, counts: {counterId: {objectId: n}}}`, how much the game's counters grew.
-     * Each batch number is applied once. Returns the batch number to acknowledge (null if the body
-     * was unusable) and the player document afterwards.
+     * Each batch number is applied once, to every guild in `guilds` ([{guild, members}], already
+     * started off). Returns the batch number to acknowledge (null if the body was unusable) and the
+     * guild documents afterwards, in the same order.
      */
-    async applyCounts(player, body) {
-      if (body == null || typeof body !== 'object' || !isInt(body.seq, 1, 1e15)) return { ack: null, player };
+    async applyCounts(player, body, guilds) {
+      const same = guilds.map((g) => g.guild);
+      if (body == null || typeof body !== 'object' || !isInt(body.seq, 1, 1e15)) return { ack: null, guilds: same };
       const ack = body.seq;
-      if (!(await store.takeGroundsSeq(player._id, body.seq))) return { ack, player };
+      if (!(await store.takeGroundsSeq(player._id, body.seq))) return { ack, guilds: same };
 
       const counts = vCounts(body.counts);
       const adds = new Map();
@@ -206,10 +291,18 @@ export function createGrounds({ store, now, guildCtx, requireRank, limits = {} }
         for (const [id, count] of entries) if (!task.ids || task.ids.includes(id)) n += count;
         if (n > 0) adds.set(task.id, Math.min(n, G.maxCount) * UNIT);
       }
-      return { ack, player: (await apply(player, adds)).player };
+      if (!adds.size) return { ack, guilds: same };
+      const t = now();
+      const after = await Promise.all(guilds.map(async ({ guild, members }) => (await apply(guild, members, player._id, adds, t)).guild));
+      return { ack, guilds: after };
     },
-    /** The player document with their own grounds in place (see `seed`). */
-    ready: seed,
+    /** A member has left: the amounts dropped, which can finish a location. */
+    async memberLeft(guildId) {
+      const guild = await store.getGuild(guildId);
+      if (!guild?.groundsPooled) return;
+      const [members, p] = await Promise.all([store.countMembers(guildId), store.guildGrounds(guildId)]);
+      if (members > 0) await settle(guild, members, p, now());
+    },
     routes: [
       ['GET', 'guilds/:id/grounds', h.view],
       ['POST', 'guilds/:id/grounds/donate', h.donate],

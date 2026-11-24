@@ -294,10 +294,11 @@ internal sealed partial class GuildWindow
                 "The guild marketplace moves real items and gold: listing an item takes it out of your bank, " +
                 "buying takes your gold and gives you the item, and your listings and offers are visible to your " +
                 "guild mates.\n\n" +
-                "Guild Grounds are tasks you do yourself while in a guild. For the things those tasks ask for, the mod " +
+                "Guild Grounds are tasks your guild works on together. For the things those tasks ask for, the mod " +
                 "reports how many you did: monsters defeated, animals trapped, courses run, Thieving successes " +
                 "and items you made, gathered, burned or buried, including while the game was closed. Items you donate there leave " +
-                "your bank for good. Each location you finish gives you a small passive bonus.\n\n" +
+                "your bank for good. Guild mates can see how much you contributed to each task. Each location the guild " +
+                "finishes gives every member a small passive bonus for 30 days.\n\n" +
                 "It does not send your save or anything about your account. You can delete your guild data at any time."));
             if (!update)
             {

@@ -19,8 +19,9 @@ internal sealed class Identity
     /// new, so players who agreed to an older notice are asked again before it takes effect.
     /// 2 = adds skill levels, equipped gear, current action ids and the party XP bonus.
     /// 5 = adds Guild Grounds: counts of kills, Agility laps and Thieving, item donations, passive bonuses.
+    /// 6 = Guild Grounds are shared by the guild: guild mates see how much each member contributed.
     /// </summary>
-    public const int CurrentConsent = 5;
+    public const int CurrentConsent = 6;
 
     public string SteamId { get; }
     public string Key { get; }
