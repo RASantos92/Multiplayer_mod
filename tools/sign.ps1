@@ -34,6 +34,14 @@ function Invoke-CodeSign {
     if (-not $sign) { $sign = Join-Path $env:USERPROFILE '.dotnet\tools\sign.exe' }
     if (-not (Test-Path $sign)) { throw 'The "sign" tool is not installed. Run: dotnet tool install --global sign --prerelease' }
 
+    # The sign tool finds your sign-in by running "az". A shell opened before the Azure CLI was installed
+    # does not have it on PATH yet, and the tool then reports "Azure CLI not installed".
+    if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
+        $azDir = Join-Path $env:ProgramFiles 'Microsoft SDKs\Azure\CLI2\wbin'
+        if (Test-Path (Join-Path $azDir 'az.cmd')) { $env:PATH = "$azDir;$env:PATH" }
+        else { throw 'The Azure CLI is not installed. Install it, then run: az login' }
+    }
+
     foreach ($file in $Path) {
         $full = (Resolve-Path $file).Path
         $dir = Split-Path $full -Parent
@@ -44,6 +52,7 @@ function Invoke-CodeSign {
             --artifact-signing-endpoint $config.endpoint `
             --artifact-signing-account $config.account `
             --artifact-signing-certificate-profile $config.certificateProfile `
+            --azure-credential-type azure-cli `
             -b $dir $leaf
         if ($LASTEXITCODE -ne 0) {
             & $sign code trusted-signing -tse $config.endpoint -tsa $config.account -tscp $config.certificateProfile -b $dir $leaf
