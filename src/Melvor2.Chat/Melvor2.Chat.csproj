@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>Melvor2.Chat</RootNamespace>
-    <Version>0.7.1</Version>
+    <Version>0.7.2</Version>
   </PropertyGroup>
 </Project>
