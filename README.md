@@ -210,6 +210,16 @@ Uninstalling does not remove you from your guilds. To erase your guild data from
 | The install window shows "Usage: Melvor2.Patcher" then "Patching failed" | Same cause: Smart App Control blocked the installer's helper program. |
 | The game will not start | Run the uninstall line, then verify the game files in Steam. |
 
+### Check your install
+
+If the mod still does not show, start the game, load a save, then run this line the same way as the install line. It only reads: it changes nothing and sends nothing anywhere.
+
+```
+powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/RASantos92/Multiplayer_mod/main/check.ps1 | iex"
+```
+
+It prints whether the game is patched, which mod files are there, and the mod's lines from the game log. Copy everything between the two `===` lines and send it to the person who shared this mod.
+
 ---
 
 ## Is this safe?
