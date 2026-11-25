@@ -30,5 +30,24 @@
     $lines = Select-String -Path $log -Pattern 'Game Version|\[ModLoader\]|\[Chat\]|Application Control|Melvor2\.Chat|Melvor2\.ModLoader' | Where-Object { $_.Line -notmatch 'probe dir' } | ForEach-Object { $_.Line.Replace($env:USERPROFILE, '~') } | Select-Object -First 25
     if ($lines) { $lines } else { '(no mod lines in the log: the mod did not start)' }
   } else { 'Game log: not found' }
+  '--- Windows security ---'
+  $sac = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -ErrorAction SilentlyContinue).VerifiedAndReputablePolicyState
+  $sacText = switch ($sac) { 0 { 'Off' } 1 { 'On' } 2 { 'Evaluation' } default { 'unknown' } }
+  "Smart App Control:  $sacText"
+  try {
+    $av = (Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct -ErrorAction Stop | ForEach-Object { $_.displayName } | Sort-Object -Unique) -join ', '
+    "Antivirus:          $av"
+  } catch { 'Antivirus:          (could not read)' }
+  try {
+    $blocks = Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-CodeIntegrity/Operational'; StartTime = (Get-Date).AddDays(-3) } -ErrorAction Stop |
+      Where-Object { $_.Message -match 'Melvor' } | Select-Object -First 4
+    if ($blocks) {
+      'Windows blocked or flagged these files (newest first):'
+      foreach ($b in $blocks) {
+        $m = ($b.Message -replace '\s+', ' ').Replace($env:USERPROFILE, '~')
+        "  [$($b.TimeCreated)] id $($b.Id): $($m.Substring(0, [Math]::Min(260, $m.Length)))"
+      }
+    } else { 'Windows code-integrity log: nothing about Melvor in the last 3 days' }
+  } catch { "Windows code-integrity log: nothing found or could not read ($($_.Exception.Message))" }
   '=== end ==='
 }
