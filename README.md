@@ -20,7 +20,7 @@ powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.
 
 **4. A window opens and does the work. Wait for the word `Installed`.** Then close the window and start the game from Steam as usual. If Steam asks how to launch, pick the first option.
 
-The same line also works if you paste it into Command Prompt or PowerShell.
+The same line also works if you paste it into Command Prompt or PowerShell. If Windows answers step 3 with "Windows cannot access the specified device, path, or file", it is refusing to start PowerShell from the Run box: open the Start menu, type `PowerShell`, open **Windows PowerShell**, and paste the line there.
 
 That's it. You only need to do this again after the game updates (see below).
 
@@ -206,8 +206,9 @@ Uninstalling does not remove you from your guilds. To erase your guild data from
 | Cannot invite a friend to the guild | They need the mod installed and **Enable Guilds** clicked once. |
 | "This Steam account already enabled guilds on another PC" | Your guild key lives on the PC where you first enabled guilds. Ask the person who shared this mod to reset your guild account, then click **Enable Guilds** again. You keep your guilds. |
 | "This server is in closed testing" or "That tester code is not right" | Type the tester code from the person who shared this mod into the box above **Enable Guilds**. |
-| No Guild button, and the game log says "An Application Control policy has blocked this file" | Windows **Smart App Control** is blocking the mod because its files are not recognised. See "Smart App Control" below. |
-| The install window shows "Usage: Melvor2.Patcher" then "Patching failed" | Same cause: Smart App Control blocked the installer's helper program. |
+| "Windows cannot access the specified device, path, or file" after pasting the install line into the Run box | Windows refused to start PowerShell from the Run box; nothing was installed. Open the Start menu, type `PowerShell`, open **Windows PowerShell**, and paste the line there. |
+| No Guild button after a correct install, or the game log says "An Application Control policy has blocked this file" | Windows **Smart App Control** blocked a version from before 0.7.2, which was not code-signed. Close the game and run the install line again to get a signed version. See "Smart App Control" below. |
+| The install window shows "Usage: Melvor2.Patcher" then "Patching failed" | Same cause: Smart App Control blocked the unsigned installer helper of a version before 0.7.2. Run the install line again. |
 | The game will not start | Run the uninstall line, then verify the game files in Steam. |
 
 ### Check your install
@@ -238,7 +239,9 @@ It prints whether the game is patched, which mod files are there, and the mod's 
 
 Some Windows 11 PCs have **Smart App Control** turned on (Windows Security > App & browser control). It blocks programs and DLLs that Windows does not recognise, and it can block this mod: the Guild button and chat icon never appear, or the installer fails with "Patching failed".
 
-Releases marked **signed** on the releases page are code-signed, which Smart App Control accepts. If you are on an unsigned release and are blocked, wait for a signed one. Turning Smart App Control off is your own decision: it lowers your PC's protection and Windows only lets you turn it back on by resetting Windows.
+**From version 0.7.2 every release is code-signed**, which Smart App Control accepts, so you do not need to change any Windows setting. If you installed an older version and are blocked, close the game and run the install line again. The signature names the person who publishes this mod, verified by Microsoft; you can see it under Properties > Digital Signatures on the mod's DLL files.
+
+If the mod is still blocked on 0.7.2 or later, run the check line under "Check your install" and send the output to the person who shared this mod. Turning Smart App Control off is your own decision: it lowers your PC's protection and Windows only lets you turn it back on by resetting Windows.
 
 One part cannot be signed: the installer changes one of the game's own files on your PC. Windows has accepted that file so far, but it could block it in future.
 
@@ -280,7 +283,7 @@ The server cannot check Steam logins, so your identity is a secret key stored on
 1. Download [Melvor2Chat.zip](https://github.com/RASantos92/Multiplayer_mod/releases/latest/download/Melvor2Chat.zip).
 2. Right-click the zip and choose **Extract All**.
 3. Close the game and double-click `install.cmd` in the extracted folder.
-4. Windows may show a blue "Windows protected your PC" box because the files are not signed. Click **More info**, then **Run anyway**.
+4. Windows may show a blue "Windows protected your PC" box, because `install.cmd` is a plain script file that cannot carry a signature (the programs and DLLs it installs are signed from 0.7.2). Click **More info**, then **Run anyway**.
 
 To remove it, double-click `uninstall.cmd`.
 
